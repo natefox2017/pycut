@@ -20,7 +20,8 @@ from pathlib import Path
 
 from .categorize import REVIEW_CATEGORY
 from .config import CATEGORIES, SliceRules
-from .media import MediaInfo, detect_scenes, extract_frame, mean_volume_db, probe
+from .media import (MediaInfo, detect_scenes, extract_frames_batch,
+                    mean_volume_db, probe)
 from .slicer import plan_cuts
 
 
@@ -70,16 +71,19 @@ class EvidenceBuilder:
         frames_dir.mkdir(parents=True, exist_ok=True)
 
         segments: list[SegmentEvidence] = []
+        frame_jobs: list[tuple[float, Path]] = []
         for i, (s, e) in enumerate(cuts):
             fps: list[str] = []
             for j, t in enumerate((s + 0.3, (s + e) / 2, max(s + 0.3, e - 0.3))):
                 fp = frames_dir / f"seg_{i:03d}_f{j}.jpg"
-                extract_frame(src, min(t, e - 0.1), fp, width=480)
                 fps.append(f"frames/{fp.name}")
+                frame_jobs.append((min(t, e - 0.1), fp))
             segments.append(SegmentEvidence(
                 index=i, start=round(s, 2), end=round(e, 2),
                 duration=round(e - s, 2), frames=fps,
                 has_audio=info.has_audio))
+        # 单次解码批量抽帧（更快更稳）
+        extract_frames_batch(src, frame_jobs, width=480)
 
         # 音频信息（整条一次，避免逐段重复计算）
         vol = mean_volume_db(src) if info.has_audio else None
