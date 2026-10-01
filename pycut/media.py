@@ -89,6 +89,37 @@ def extract_frame(path: Path, t: float, out: Path,
     return out
 
 
+def extract_frames_batch(src: Path, jobs: list[tuple[float, Path]],
+                         width: int = 480) -> None:
+    """批量抽帧：逐帧用输入定位（-ss 在 -i 之前）快速抽取。
+
+    之前试过单次解码 + select 多时间点方案，但 FFmpeg 的表达式解析器
+    在 between() 项数多时直接报错；逐帧输入定位实测每帧 <1s 且稳定。
+    单帧偶发失败时重试 3 次，仍失败则记警告跳过（不中断整条视频）。
+    """
+    jobs = sorted(jobs, key=lambda j: j[0])
+    failed: list[float] = []
+    for t, dst in jobs:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        ok = False
+        for _ in range(3):
+            r = subprocess.run(
+                ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                 "-ss", f"{t:.2f}", "-i", str(src),
+                 "-frames:v", "1", "-vf", f"scale={width}:-1", str(dst)],
+                capture_output=True, text=True, timeout=60,
+            )
+            if r.returncode == 0 and dst.exists() and dst.stat().st_size > 0:
+                ok = True
+                break
+            dst.unlink(missing_ok=True)
+        if not ok:
+            failed.append(t)
+    if failed:
+        print(f"  警告: {src.name} 有 {len(failed)}/{len(jobs)} 帧抽取失败已跳过: "
+              f"{[round(t,1) for t in failed][:5]}")
+
+
 def mean_volume_db(path: Path) -> float | None:
     """平均音量（dB），用于判断是否有持续人声；无音频返回 None。"""
     r = subprocess.run(
