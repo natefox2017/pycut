@@ -1,0 +1,4 @@
+# 运行时依赖：全部使用标准库 + 外部工具，无需 pip 安装
+# 外部工具：
+#   - ffmpeg / ffprobe 8.x
+#   - hatch_gws_cli（Google Drive，Arlo 云电脑预装）
