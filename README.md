@@ -1,1 +1,32 @@
-IyBQeUN1dAoK5LqR56uv6KeG6aKR5YiH54mH5LiO5re35Ymq566h57q/77yIUHl0aG9uICsgRkZtcGVn77yM57qv5ZG95Luk6KGM77yM5peg5Zu+5b2i55WM6Z2i77yJ44CCCgrlnKggQXJsbyDnmoTkupHnlLXohJHkuIrmiafooYzvvIzku44gR29vZ2xlIERyaXZlIOivu+WPlueJqeaWmeOAgeWbnuWGmeWIh+eJh+W6k+S4juaIkOeJh++8jOeUqOe9keebmOWPsOi0puS/neivgeaWreeCuee7rei3keOAggoKIyMg5Lik5Liq54us56uL5Yqf6IO9Cgp8IOWKn+iDvSB8IOi+k+WFpSB8IOi+k+WHuiB8CnwtLS18LS0tfC0tLXwKfCDlip/og73kuIDvvJrmlbTnkIbliIfniYcgfCDnvZHnm5jplb/op4bpopHnm67lvZXvvIjnlKjmiLfmj5DkvpvliIbkuqvlnLDlnYDvvIkgfCDnvZHnm5ggYOWIh+eJh+W6ky9gIOS4i+aMieWIhuexu+W9kuaho+eahOWIh+eJhyB8Cnwg5Yqf6IO95LqM77ya5re35Ymq5oiQ54mHIHwg572R55uYIGDliIfniYflupMvYCArIOivneacr+aWh+S7tiB8IOe9keebmCBg5oiQ54mHLzzmibnmrKE+L2Ag5LiL55qE5oiQ5ZOB6KeG6aKRIHwKCuS4pOWKn+iDveS6kuS4jeS+nei1lu+8jOWPr+WNleeLrOi/kOihjOOAgua3t+WJquWPqua2iOi0ueWIh+eJh++8jOS4jeeisOmVv+inhumikeOAggoKIyMg5paH5qGjCgotIFswMC3pnIDmsYLor7TmmI5dKGRvY3MvMDAt6ZyA5rGC6K+05piOLm1kKSDigJTigJQg6IOM5pmv44CB5Yqf6IO96ZyA5rGC44CB57qm5p2f44CB6IyD5Zu0Ci0gWzAxLeWkhOeQhua1geeoi10oZG9jcy8wMS3lpITnkIbmtYHnqIsubWQpIOKAlOKAlCDkuKTkuKrlip/og73nmoTlrozmlbTlpITnkIbmtYHnqIsKLSBbMDIt5paH5Lu25aS55ZG95ZCN6KeE6IyDXShkb2NzLzAyLeaWh+S7tuWkueWRveWQjeinhOiMgy5tZCkg4oCU4oCUIOe9keebmOS4juacrOWcsOeahOaWh+S7tuWkueOAgeaWh+S7tuWQjeinhOiMgwotIFswMy3lvIDlt6XliY3lh4blpIfmuIXljZVdKGRvY3MvMDMt5byA5bel5YmN5YeG5aSH5riF5Y2VLm1kKSDigJTigJQg5byA5bel5YmN5b+F6aG756Gu6K6k55qE5omA5pyJ5LqL6aG5Ci0gWzA0LeebruW9leS9nOeUqOehruiupOihqF0oZG9jcy8wNC3nm67lvZXkvZznlKjnoa7orqTooagubWQpIOKAlOKAlCDnvZHnm5jnm67lvZXkvZznlKjnoa7orqTmqKHmnb/ooagKCiMjIOS4jiBFYXN5Q3V0IOahjOmdoueJiOeahOWFs+ezuwoK5YiH54mH5rWB56iL6K+t5LmJ5LiOIFtlYXN5Y3V0XShodHRwczovL2dpdGh1Yi5jb20vbmF0ZWZveDIwMTcvZWFzeWN1dCkg5LuT5bqTIGBkb2NzL1NMSUNFLVBSRVBBUkFUSU9OLm1kYCDkuIDoh7TvvIjmiavmj48g4oaSIOagoemqjCDihpIg5p+l6K6w5b+GIOKGkiDliIbmnpAg4oaSIOiuoeWIkiDihpIg5a+85Ye6IOKGkiDpqozmlLbvvInvvIzmiafooYzlsYLnlLEi5qGM6Z2iIEdVSSArIOacrOacuiBDb2RleCLmm7/mjaLkuLoiQXJsbyDkupHnlLXohJHlkb3ku6TooYwi44CC5Lik5LuT5bqT5peg5Luj56CB5YWx5Lqr44CCCgrlt7Lnoa7orqTnmoTlt67lvILvvJoqKjwxMCDnp5LnmoTop4bpopHkuI3liIfniYcqKu+8m+WujOaIkOiusOW/hueUqOe9keebmCBgRWFzeUN1dC3lpITnkIbov5vluqYubWRg77yI6Lev5b6EICsgTUQ177yJ5Luj5pu/IHNxbGl0ZeOAggoKIyMg5b2T5YmN6Zi25q61CgrmlofmoaPlhYjooYzvvIzlrp7njrDvvIhQeXRob27vvInlvoXlvIDlj5HjgILlvIDlt6XliY3mjIkgYGRvY3MvMDMt5byA5bel5YmN5YeG5aSH5riF5Y2VLm1kYCDpgJDpobnnoa7orqTvvIzlhYjot5EgcGlsb3Qg5YaN5om56YeP44CCCg==
+# PyCut
+
+云端视频切片与混剪管线（Python + FFmpeg，纯命令行，无图形界面）。
+
+在 Arlo 的云电脑上执行，从 Google Drive 读取物料、回写切片库与成片，用网盘台账保证断点续跑。
+
+## 两个独立功能
+
+| 功能 | 输入 | 输出 |
+|---|---|---|
+| 功能一：整理切片 | 网盘长视频目录（用户提供分享地址） | 网盘 `切片库/` 下按分类归档的切片 |
+| 功能二：混剪成片 | 网盘 `切片库/` + 话术文件 | 网盘 `成片/<批次>/` 下的成品视频 |
+
+两功能互不依赖，可单独运行。混剪只消费切片，不碰长视频。
+
+## 文档
+
+- [00-需求说明](docs/00-需求说明.md) —— 背景、功能需求、约束、范围
+- [01-处理流程](docs/01-处理流程.md) —— 两个功能的完整处理流程
+- [02-文件夹命名规范](docs/02-文件夹命名规范.md) —— 网盘与本地的文件夹、文件名规范
+- [03-开工前准备清单](docs/03-开工前准备清单.md) —— 开工前必须确认的所有事项
+- [04-目录作用确认表](docs/04-目录作用确认表.md) —— 网盘目录作用确认模板表
+
+## 与 EasyCut 桌面版的关系
+
+切片流程语义与 [easycut](https://github.com/natefox2017/easycut) 仓库 `docs/SLICE-PREPARATION.md` 一致（扫描 → 校验 → 查记忆 → 分析 → 计划 → 导出 → 验收），执行层由"桌面 GUI + 本机 Codex"替换为"Arlo 云电脑命令行"。两仓库无代码共享。
+
+已确认的差异：**<10 秒的视频不切片**；完成记忆用网盘 `EasyCut-处理进度.md`（路径 + MD5）代替 sqlite。
+
+## 当前阶段
+
+文档先行，实现（Python）待开发。开工前按 `docs/03-开工前准备清单.md` 逐项确认，先跑 pilot 再批量。
