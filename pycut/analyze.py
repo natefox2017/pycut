@@ -71,10 +71,11 @@ class EvidenceBuilder:
         sentences: list[tuple[float, float, str]] = []
         if info.has_audio:
             try:
-                from .speech import available as stt_available, transcribe
+                from .speech import (available as stt_available,
+                                     refine_sentences, transcribe)
                 if stt_available():
                     print("  🎙 转录话术取句子时间戳...")
-                    segs = transcribe(src)
+                    segs = refine_sentences(transcribe(src))
                     sentences = [(s.start, s.end, s.text) for s in segs]
                     cuts = snap_cuts_to_speech(
                         cuts, [(s, e) for s, e, _ in sentences], self.rules)
@@ -95,9 +96,13 @@ class EvidenceBuilder:
                 fp = frames_dir / f"seg_{i:03d}_f{j}.jpg"
                 fps.append(f"frames/{fp.name}")
                 frame_jobs.append((min(t, e - 0.1), fp))
-            # 本段内的话术（句子对齐后应为完整句子）
-            speech = " ".join(t for ss, ee, t in sentences
-                              if ss >= s - 0.3 and ee <= e + 0.3)
+            # 本段内的话术（句子对齐后应为完整句子；按重叠度归属）
+            speech_parts = []
+            for ss, ee, t in sentences:
+                overlap = min(ee, e) - max(ss, s)
+                if overlap >= min(1.0, (ee - ss) * 0.5):
+                    speech_parts.append(t)
+            speech = " ".join(speech_parts)
             segments.append(SegmentEvidence(
                 index=i, start=round(s, 2), end=round(e, 2),
                 duration=round(e - s, 2), frames=fps,
