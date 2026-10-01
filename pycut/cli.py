@@ -1,10 +1,20 @@
 """PyCut 命令行入口。
 
+云电脑说明（必读）：
+- 运行环境 = Hatch 云电脑（Linux）。直接 `python -m pycut ...` 即可，
+  无需虚拟环境（主流程零第三方依赖）。
+- WORKDIR（~/workspace/pycut/run）是本地中转区：downloads（下载中转）、
+  outputs（切片产出）、review_pack（AI 证据包）、decisions（AI 决策）、
+  transcribe（字幕帧）、hook_pool（开头池）。处理完一批后本地副本删除，
+  只留证据包和决策（可追溯）。
+- 语音转录是唯一的例外：走 pycut/.venv 里的 faster-whisper（见 speech.py）。
+- 网盘认证由运行时托管，开箱即用（见 drive.py）。
+
 用法示例：
-    python -m pycut scan --path 爆款素材/抖音
-    python -m pycut slice --path 爆款素材/抖音 --path 爆款素材/快手
-    python -m pycut import-shorts --path 片段/片段手机录制 --path 片段/死老鼠
-    python -m pycut slice --path 爆款素材/抖音 --dry-run
+    python -m pycut scan --path 颗粒/爆款素材/抖音
+    python -m pycut slice --path 颗粒/爆款素材/抖音 --decisions run/decisions
+    python -m pycut import-shorts --path 颗粒/片段/片段手机录制
+    python -m pycut organize --path 颗粒 --dry-run
 """
 from __future__ import annotations
 
