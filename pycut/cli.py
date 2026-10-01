@@ -21,6 +21,9 @@ from .ledger import Ledger
 from .media import probe
 from .pipeline import SlicePipeline
 from .product import brief_text, load_product
+from .scriptgen import (build_prepare_brief, estimate_duration,
+                        extract_opening_audio, target_chars,
+                        write_scripts_to_taskform)
 from .taskform import generate_taskform, read_taskform, summarize as taskform_summary
 from .voice import extract_subtitle_frames
 
@@ -198,6 +201,77 @@ def cmd_hooks(args) -> int:
     return 0
 
 
+def cmd_scriptgen(args) -> int:
+    """话术生成（独立执行过程，产出进任务单"话术"表）。
+    prepare: 方式一，输出 Arlo 写话术用的输入包（产品+参考话术+目标）。
+    write: 把话术文件校验后写入任务单"话术"表并回传网盘。
+    extract-opening: 方式二，提取爆款视频前 N 秒原音频存入 颗粒/音频库/。
+    """
+    from pathlib import Path
+    client, layout = _client(), DriveLayout()
+    parts = [x for x in args.path.strip("/").split("/") if x]
+    folder = client.resolve_path(layout.project_root_id, *parts)
+    product = load_product(Path(__file__).resolve().parent.parent / "product.yaml")
+
+    if args.action == "prepare":
+        ref: list[str] = []
+        ref_file = client.find_child(folder.id, "参考话术.txt")
+        if ref_file:
+            tmp = WORKDIR / "参考话术.txt"
+            client.download(ref_file, tmp)
+            ref = [x.strip() for x in tmp.read_text(encoding="utf-8").splitlines()
+                   if x.strip()]
+            tmp.unlink(missing_ok=True)
+        print(build_prepare_brief(product, ref, args.seconds, args.count))
+        print(f"\nArlo 写完话术后跑: pycut scriptgen write --path {args.path} "
+              f"--name {args.name} --scripts-file 话术.txt")
+        return 0
+
+    if args.action == "write":
+        name = args.name
+        f = client.find_child(folder.id, name)
+        if not f:
+            print(f"找不到任务单: {name}")
+            return 1
+        local = WORKDIR / name
+        client.download(f, local)
+        scripts = [x.strip() for x in
+                   Path(args.scripts_file).read_text(encoding="utf-8").splitlines()
+                   if x.strip()]
+        blocked = write_scripts_to_taskform(local, scripts, product)
+        if blocked:
+            print("❌ 以下话术未通过事实核对，未写入：")
+            for b in blocked:
+                print("  -", b)
+            local.unlink(missing_ok=True)
+            return 2
+        client.update_content(f.id, local)
+        local.unlink(missing_ok=True)
+        print(f"✅ {len(scripts)} 条话术已写入任务单" )
+        for s in scripts:
+            print(f"  约{estimate_duration(s)}s | {s[:40]}")
+        return 0
+
+    # extract-opening
+    vparts = [x for x in args.video.strip("/").split("/") if x]
+    vfolder = client.resolve_path(layout.project_root_id, *vparts[:-1])
+    vf = client.find_child(vfolder.id, vparts[-1])
+    if not vf:
+        print(f"找不到视频: {args.video}")
+        return 1
+    local_v = WORKDIR / "downloads" / vf.name
+    client.download(vf, local_v)
+    audio_dir = client.ensure_folder(
+        client.resolve_path(layout.project_root_id, "颗粒").id, "音频库")
+    dst = WORKDIR / f"opening_{vf.md5[:8] if vf.md5 else 'x'}_{args.seconds:.0f}s.m4a"
+    extract_opening_audio(local_v, args.seconds, dst)
+    up = client.upload(dst, audio_dir.id)
+    local_v.unlink(missing_ok=True)
+    dst.unlink(missing_ok=True)
+    print(f"🎙 开头原音频已存: 颗粒/音频库/{up.name} (id={up.id})")
+    return 0
+
+
 def cmd_taskform(args) -> int:
     """任务单：new=按规划生成并上传到网盘；read=下载并校验（只认表内事项）。"""
     from datetime import date
@@ -284,6 +358,16 @@ def main(argv=None) -> int:
     p.add_argument("--path", required=True, help="网盘目录，如 颗粒")
     p.add_argument("--name", default=None, help="任务单文件名（默认按日期）")
     p.set_defaults(fn=cmd_taskform)
+
+    p = sub.add_parser("scriptgen", help="话术生成：独立执行，产出进任务单话术表")
+    p.add_argument("action", choices=["prepare", "write", "extract-opening"])
+    p.add_argument("--path", required=True, help="网盘目录，如 颗粒")
+    p.add_argument("--name", default=None, help="任务单文件名（write 用）")
+    p.add_argument("--seconds", type=float, default=30.0, help="每条目标秒数（prepare 用）")
+    p.add_argument("--count", type=int, default=5, help="生成条数（prepare 用）")
+    p.add_argument("--scripts-file", default=None, help="话术文本文件（write 用，一行一条）")
+    p.add_argument("--video", default=None, help="爆款视频网盘路径（extract-opening 用）")
+    p.set_defaults(fn=cmd_scriptgen)
 
     args = ap.parse_args(argv)
     return args.fn(args)
