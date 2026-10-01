@@ -23,17 +23,10 @@ def heuristic_category(info: MediaInfo, src_name: str,
 
 
 def audio_hint_category(media_path: Path) -> str | None:
-    """基于音频的辅助判断：有持续人声倾向 -> 人物口播。
+    """基于音频的辅助判断：已废弃（12 分类体系下音频无法可靠判定细分类）。
 
-    返回分类建议或 None（无法判断）。阈值保守，宁可返回 None
-    让切片进待复核，也不误判。
+    保留函数签名兼容旧调用，一律返回 None，由 AI 复核决定分类。
     """
-    vol = mean_volume_db(media_path)
-    if vol is None:
-        return None
-    # 平均音量高于 -30dB 且有音频轨：大概率含持续人声/口播
-    if vol > -30:
-        return "人物口播"
     return None
 
 

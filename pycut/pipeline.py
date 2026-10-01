@@ -64,8 +64,11 @@ class SlicePipeline:
 
     def _slices_root(self) -> str:
         if self._slices_root_id is None:
+            # 切片库建在 颗粒/ 下（不是外层共享根目录）
+            grain = self.client.resolve_path(
+                self.layout.project_root_id, self.layout.source_root_name)
             root = self.client.ensure_folder(
-                self.layout.project_root_id, self.layout.slices_dir_name)
+                grain.id, self.layout.slices_dir_name)
             self._slices_root_id = root.id
         return self._slices_root_id
 
@@ -117,11 +120,12 @@ class SlicePipeline:
             try:
                 res = self._process_one(src, ledger, mode)
             except Exception as ex:  # noqa: BLE001 - 单个失败不阻断整批
-                res = BatchResult(src, "failed", note=str(ex)[:200])
+                err = str(ex)[:200] or repr(ex)[:200]
+                res = BatchResult(src, "failed", note=err)
                 ledger.add_slice(SliceRecord(
                     source_path="", filename=src.name, md5=src.md5,
                     size=_fmt_size(src.size), slice_count=0,
-                    output_dir="", status="failed"))
+                    output_dir="", status="failed", note=err))
             results.append(res)
         self._cleanup_batch(batch)
         return results
@@ -146,13 +150,23 @@ class SlicePipeline:
         else:
             slices = self._import_short(local, md5, info, src.name)
 
-        # 上传
+        # 上传（直接传到最终分类文件夹，不移动）
         uploaded = 0
-        for path, category in slices:
+        by_cat: dict[str, list[tuple[str, float, str]]] = {}
+        for item in slices:
+            path, category = item[0], item[1]
+            speech = item[2] if len(item) > 2 else ""
+            dur = item[3] if len(item) > 3 else 0.0
             if self.dry_run:
                 continue
             self.client.upload(path, self._category_id(category))
             uploaded += 1
+            by_cat.setdefault(category, []).append(
+                (path.name, dur, speech))
+
+        # 更新各分类文件夹的 00-索引.md（简体）
+        if not self.dry_run and by_cat:
+            self._update_indexes(by_cat)
 
         rel_out = f"{self.layout.slices_dir_name}/<分类>"
         ledger.add_slice(SliceRecord(
@@ -165,8 +179,9 @@ class SlicePipeline:
     # ---------- 切片 / 直接入库 ----------
 
     def _slice_video(self, local: Path, md5: str,
-                     info: MediaInfo) -> list[tuple[Path, str]]:
+                     info: MediaInfo) -> list[tuple]:
         # AI 决策优先：decisions_dir/<md5>.json 存在则用 AI 切点+分类
+        # 返回 [(路径, 分类, 话术, 时长)]，话术用于写索引
         ai_plan = self._load_ai_plan(md5)
         if ai_plan is not None:
             return self._export_ai_plan(local, md5, ai_plan)
@@ -190,7 +205,7 @@ class SlicePipeline:
         return out
 
     def _load_ai_plan(self, md5: str,
-                      ) -> list[tuple[tuple[float, float], str, str]] | None:
+                      ) -> list[tuple[tuple[float, float], str, str, str]] | None:
         """读取 AI 决策（decisions_dir/<md5>.json），没有则返回 None。"""
         if self.decisions_dir is None:
             return None
@@ -201,17 +216,18 @@ class SlicePipeline:
         return None
 
     def _export_ai_plan(self, local: Path, md5: str,
-                        plan: list[tuple[tuple[float, float], str, str]]
-                        ) -> list[tuple[Path, str]]:
-        out: list[tuple[Path, str]] = []
-        for i, ((s, e), category, _reason) in enumerate(plan):
+                        plan: list[tuple[tuple[float, float], str, str, str]]
+                        ) -> list[tuple[Path, str, str, float]]:
+        """导出 AI 决策的切片，返回 [(本地路径, 分类, 话术, 时长)]。"""
+        out: list[tuple[Path, str, str, float]] = []
+        for i, ((s, e), category, _reason, speech) in enumerate(plan):
             dst = self.out_dir / f"{md5[:8]}_{i + 1:03d}_{category}.mp4"
             export_slice(local, s, e, dst, self.rules)
             ok, reason = qc_ok(dst, self.rules, expect_dur=e - s)
             if not ok:
                 dst.unlink(missing_ok=True)
                 continue
-            out.append((dst, category))
+            out.append((dst, category, speech, round(e - s, 1)))
         return out
 
     def _import_short(self, local: Path, md5: str, info: MediaInfo,
@@ -240,6 +256,57 @@ class SlicePipeline:
                 shutil.rmtree(p, ignore_errors=True)
             else:
                 p.unlink(missing_ok=True)
+
+    def _update_indexes(self, by_cat: dict[str, list[tuple[str, float, str]]]
+                      ) -> None:
+        """更新各分类文件夹的 00-索引.md，追加新切片条目（简体中文）。
+
+        by_cat: {分类: [(文件名, 时长秒, 话术)]}
+        """
+        try:
+            from opencc import OpenCC
+            cc = OpenCC("t2s")
+            to_simp = cc.convert
+        except ImportError:
+            to_simp = lambda x: x  # noqa: E731
+
+        from .config import CATEGORY_POSITION
+        for category, items in by_cat.items():
+            cat_id = self._category_id(category)
+            idx_file = self.client.find_child(cat_id, "00-索引.md")
+            if idx_file is None:
+                # 新建索引
+                tmp = self.work / f"idx_{category}.md"
+                tmp.write_text(
+                    f"# {category} 切片索引\n\n## 切片列表\n",
+                    encoding="utf-8")
+                self.client.upload(tmp, cat_id)
+                idx_file = self.client.find_child(cat_id, "00-索引.md")
+                tmp.unlink(missing_ok=True)
+            if idx_file is None:
+                continue
+            # 下载、追加、上传
+            tmp = self.work / f"idx_{category}.md"
+            self.client.download(idx_file, tmp)
+            content = tmp.read_text(encoding="utf-8")
+            if "## 切片列表" not in content:
+                content += "\n## 切片列表\n"
+            pos = CATEGORY_POSITION.get(category, "中段")
+            new_lines = []
+            for name, dur, speech in items:
+                speech_s = to_simp(speech).strip() if speech else ""
+                new_lines.append(
+                    f"- {name} | {dur}s | {pos} | {speech_s}")
+            # 去重：已存在的跳过
+            existing = set(content.split("\n"))
+            to_add = [l for l in new_lines if l not in existing]
+            if to_add:
+                if not content.endswith("\n"):
+                    content += "\n"
+                content += "\n".join(to_add) + "\n"
+                tmp.write_text(content, encoding="utf-8")
+                self.client.update_content(idx_file.id, tmp)
+            tmp.unlink(missing_ok=True)
 
     # ---------- 扫描 ----------
 

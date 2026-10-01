@@ -44,6 +44,7 @@ class CutDecision:
     end: float
     category: str
     reason: str = ""
+    speech: str = ""  # AI 填写的本段完整话术（简体，用于索引）
 
 
 def _safe_name(name: str) -> str:
@@ -72,14 +73,19 @@ class EvidenceBuilder:
         if info.has_audio:
             try:
                 from .speech import (available as stt_available,
-                                     refine_sentences, transcribe)
+                                     merge_incomplete, refine_sentences,
+                                     transcribe)
                 if stt_available():
                     print("  🎙 转录话术取句子时间戳...")
-                    segs = refine_sentences(transcribe(src))
+                    # 先按标点拆分，再合并话语未完的片段（2026-10-01 修复：
+                    # STT 无标点时停顿≠说完，必须保证每段话术完整）
+                    segs = merge_incomplete(
+                        refine_sentences(transcribe(src, with_words=True)))
                     sentences = [(s.start, s.end, s.text) for s in segs]
                     cuts = snap_cuts_to_speech(
                         cuts, [(s, e) for s, e, _ in sentences], self.rules)
-                    print(f"  句子对齐后 {len(cuts)} 段，共 {len(sentences)} 句")
+                    print(f"  完整话语合并后 {len(sentences)} 句，"
+                          f"切点 {len(cuts)} 段")
                 else:
                     print("  ⚠ faster-whisper 不可用，跳过句子对齐")
             except Exception as ex:
@@ -159,6 +165,7 @@ def load_decisions(decisions_file: Path) -> list[CutDecision]:
 
 
 def decisions_to_cuts(decisions: list[CutDecision],
-                      ) -> list[tuple[tuple[float, float], str, str]]:
-    """决策 -> [((start, end), category, reason)]，供 pipeline 导出使用。"""
-    return [((d.start, d.end), d.category, d.reason) for d in decisions]
+                      ) -> list[tuple[tuple[float, float], str, str, str]]:
+    """决策 -> [((start, end), category, reason, speech)]，供 pipeline 导出使用。"""
+    return [((d.start, d.end), d.category, d.reason, d.speech)
+            for d in decisions]
