@@ -125,6 +125,12 @@ class DriveClient:
                   json.dumps({"fileId": file_id}),
                   "--upload", str(local_path))
 
+    def trash(self, file_id: str) -> None:
+        """移入回收站（可撤销，不做永久删除）。"""
+        self._run("files", "update", "--params",
+                  json.dumps({"fileId": file_id}),
+                  "--json", json.dumps({"trashed": True}))
+
     def move(self, file_id: str, from_parent_id: str,
              to_parent_id: str) -> None:
         self._run(
