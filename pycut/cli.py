@@ -21,6 +21,7 @@ from .ledger import Ledger
 from .media import probe
 from .pipeline import SlicePipeline
 from .product import brief_text, load_product
+from .taskform import generate_taskform, read_taskform, summarize as taskform_summary
 from .voice import extract_subtitle_frames
 
 WORKDIR = Path.home() / "workspace" / "pycut" / "run"
@@ -197,6 +198,37 @@ def cmd_hooks(args) -> int:
     return 0
 
 
+def cmd_taskform(args) -> int:
+    """任务单：new=按规划生成并上传到网盘；read=下载并校验（只认表内事项）。"""
+    from datetime import date
+    from pathlib import Path
+    client, layout = _client(), DriveLayout()
+    parts = [x for x in args.path.strip("/").split("/") if x]
+    folder = client.resolve_path(layout.project_root_id, *parts)
+    name = args.name or f"任务单-{date.today():%Y-%m-%d}.xlsx"
+    local = WORKDIR / name
+    if args.action == "new":
+        product = load_product(Path(__file__).resolve().parent.parent / "product.yaml")
+        generate_taskform(local, product, batch_name=name.replace(".xlsx", ""))
+        up = client.upload(local, folder.id)
+        local.unlink(missing_ok=True)
+        print(f"📋 任务单已上传: {args.path}/{name} (id={up.id})")
+        print("用户在手机上填写完成后，把'状态'改为'已填写'并在聊天里告诉我")
+    else:
+        f = client.find_child(folder.id, name)
+        if not f:
+            print(f"找不到任务单: {name}")
+            return 1
+        client.download(f, local)
+        form = read_taskform(local)
+        local.unlink(missing_ok=True)
+        print(taskform_summary(form))
+        if not form.ready:
+            print("\n⏸ 任务单未填写完成，不执行任何处理")
+            return 2
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="pycut", description="PyCut 云端视频处理管线")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -246,6 +278,12 @@ def main(argv=None) -> int:
     p.add_argument("--limit", type=int, default=3, help="最多处理几个视频")
     p.add_argument("--seconds", type=float, default=4.0, help="开头取几秒")
     p.set_defaults(fn=cmd_hooks)
+
+    p = sub.add_parser("taskform", help="任务单：生成/读取本批处理任务单")
+    p.add_argument("action", choices=["new", "read"], help="new=生成并上传，read=下载并校验")
+    p.add_argument("--path", required=True, help="网盘目录，如 颗粒")
+    p.add_argument("--name", default=None, help="任务单文件名（默认按日期）")
+    p.set_defaults(fn=cmd_taskform)
 
     args = ap.parse_args(argv)
     return args.fn(args)
