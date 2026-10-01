@@ -75,7 +75,9 @@ def snap_cuts_to_speech(cuts: list[tuple[float, float]],
     """把切点吸附到句子边界：切点不得落在句子内部。
 
     cuts: 场景初分段 [(s,e)]；sentences: 句子区间 [(s,e)]（STT 转录）。
-    返回 [(s,e)]，每段 [min_slice_seconds, max_slice_seconds]，
+    策略：直接删除落在句子内部的场景切点（而不是逐个挪位，避免互相碰撞）；
+    句子完整性优先于时长上限（允许 +1s 宽限）。
+    返回 [(s,e)]，每段 [min_slice_seconds, max_slice_seconds + 1]，
     切点只落在句子边界或静音区。
     """
     min_d, max_d = rules.min_slice_seconds, rules.max_slice_seconds
@@ -84,12 +86,13 @@ def snap_cuts_to_speech(cuts: list[tuple[float, float]],
     if not sentences:
         return cuts
 
-    # 1) 内部切点吸附：落在句子内的切点移到句子边缘（优先句尾）
+    # 1) 删除落在句子内部的场景切点
     bounds = [cuts[0][0]]
     for i in range(len(cuts) - 1):
         b = cuts[i][1]
-        bounds.append(_snap_one(b, bounds[-1], cuts[i + 1][1],
-                                sentences, min_d, max_d, tol))
+        inside = any(s + tol < b < e - tol for s, e in sentences)
+        if not inside:
+            bounds.append(b)
     bounds.append(cuts[-1][1])
     chunks = [(bounds[i], bounds[i + 1])
               for i in range(len(bounds) - 1) if bounds[i + 1] - bounds[i] > 0.3]
@@ -99,7 +102,7 @@ def snap_cuts_to_speech(cuts: list[tuple[float, float]],
     for a, b in chunks:
         out.extend(_split_long_at_sentences(a, b, sentences, min_d, max_d))
 
-    # 3) 合并过短段
+    # 3) 合并过短段（合并是删切点，不会产生新的句中切点）
     merged: list[tuple[float, float]] = []
     for ch in out:
         if merged and (ch[1] - ch[0] < min_d or
@@ -111,28 +114,12 @@ def snap_cuts_to_speech(cuts: list[tuple[float, float]],
     return [(round(s, 2), round(e, 2)) for s, e in merged]
 
 
-def _snap_one(b: float, prev: float, nxt: float,
-              sentences: list[tuple[float, float]],
-              min_d: float, max_d: float, tol: float) -> float:
-    """单个切点吸附。返回新的切点位置。"""
-    for s, e in sentences:
-        if s + tol < b < e - tol:
-            # 优先移到句尾（左段保留完整句子）
-            if e - prev <= max_d and nxt - e >= min_d:
-                return e
-            # 其次句首
-            if s - prev >= min_d and nxt - s <= max_d:
-                return s
-            return b  # 两边都排不下，保持原样
-    return b
-
-
 def _split_long_at_sentences(a: float, b: float,
                              sentences: list[tuple[float, float]],
                              min_d: float, max_d: float
                              ) -> list[tuple[float, float]]:
-    """超长段在句子边界处拆分，保证每段 [min_d, max_d]。"""
-    if b - a <= max_d:
+    """超长段在句子边界处拆分，保证每段 [min_d, max_d]（+1s 句子完整性宽限）。"""
+    if b - a <= max_d + 1.0:
         return [(a, b)]
     pts = sorted({x for s, e in sentences for x in (s, e)
                   if a + min_d <= x <= b - min_d})
