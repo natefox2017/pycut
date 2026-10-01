@@ -66,6 +66,98 @@ def plan_cuts(duration: float, scenes: list[float],
     return final
 
 
+# ---------- 句子对齐（用户 2026-10-01 要求：有话术必须说完一句） ----------
+
+def snap_cuts_to_speech(cuts: list[tuple[float, float]],
+                        sentences: list[tuple[float, float]],
+                        rules: SliceRules,
+                        tol: float = 0.15) -> list[tuple[float, float]]:
+    """把切点吸附到句子边界：切点不得落在句子内部。
+
+    cuts: 场景初分段 [(s,e)]；sentences: 句子区间 [(s,e)]（STT 转录）。
+    返回 [(s,e)]，每段 [min_slice_seconds, max_slice_seconds]，
+    切点只落在句子边界或静音区。
+    """
+    min_d, max_d = rules.min_slice_seconds, rules.max_slice_seconds
+    if not cuts:
+        return []
+    if not sentences:
+        return cuts
+
+    # 1) 内部切点吸附：落在句子内的切点移到句子边缘（优先句尾）
+    bounds = [cuts[0][0]]
+    for i in range(len(cuts) - 1):
+        b = cuts[i][1]
+        bounds.append(_snap_one(b, bounds[-1], cuts[i + 1][1],
+                                sentences, min_d, max_d, tol))
+    bounds.append(cuts[-1][1])
+    chunks = [(bounds[i], bounds[i + 1])
+              for i in range(len(bounds) - 1) if bounds[i + 1] - bounds[i] > 0.3]
+
+    # 2) 拆超长段：在内部句子边界处贪心拆分
+    out: list[tuple[float, float]] = []
+    for a, b in chunks:
+        out.extend(_split_long_at_sentences(a, b, sentences, min_d, max_d))
+
+    # 3) 合并过短段
+    merged: list[tuple[float, float]] = []
+    for ch in out:
+        if merged and (ch[1] - ch[0] < min_d or
+                       merged[-1][1] - merged[-1][0] < min_d):
+            a0, _ = merged.pop()
+            merged.append((a0, ch[1]))
+        else:
+            merged.append(ch)
+    return [(round(s, 2), round(e, 2)) for s, e in merged]
+
+
+def _snap_one(b: float, prev: float, nxt: float,
+              sentences: list[tuple[float, float]],
+              min_d: float, max_d: float, tol: float) -> float:
+    """单个切点吸附。返回新的切点位置。"""
+    for s, e in sentences:
+        if s + tol < b < e - tol:
+            # 优先移到句尾（左段保留完整句子）
+            if e - prev <= max_d and nxt - e >= min_d:
+                return e
+            # 其次句首
+            if s - prev >= min_d and nxt - s <= max_d:
+                return s
+            return b  # 两边都排不下，保持原样
+    return b
+
+
+def _split_long_at_sentences(a: float, b: float,
+                             sentences: list[tuple[float, float]],
+                             min_d: float, max_d: float
+                             ) -> list[tuple[float, float]]:
+    """超长段在句子边界处拆分，保证每段 [min_d, max_d]。"""
+    if b - a <= max_d:
+        return [(a, b)]
+    pts = sorted({x for s, e in sentences for x in (s, e)
+                  if a + min_d <= x <= b - min_d})
+    res: list[tuple[float, float]] = []
+    cur = a
+    while b - cur > max_d:
+        cands = [x for x in pts if cur + min_d <= x <= cur + max_d]
+        nxt = max(cands) if cands else cur + max_d
+        res.append((cur, nxt))
+        cur = nxt
+    # 收尾：最后一段过短则与前一段重新在句子边界处分
+    if res and b - cur < min_d:
+        p0, _p1 = res.pop()
+        cands = [x for x in pts if p0 + min_d <= x <= b - min_d]
+        if cands:
+            m = max(cands)
+            res.append((p0, m))
+            res.append((m, b))
+        else:
+            res.append((p0, b))  # 退化：接受略超/略短
+    else:
+        res.append((cur, b))
+    return res
+
+
 def _split_even(s: float, e: float, rules: SliceRules) -> list[tuple[float, float]]:
     """无场景边界时的均匀拆分，尾段重分配避免产生过小尾巴。"""
     d = e - s
