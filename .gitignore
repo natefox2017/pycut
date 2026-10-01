@@ -1,4 +1,38 @@
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+pip-log.txt
+
+# PyCut 本地运行产物（网盘为唯一持久化，本地处理完即删，不提交）
 run/
+*.log
+
+# 台账本地副本（以网盘上的为准）
+EasyCut-处理进度.md
+
+# 本地视频/图片（绝不提交）
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.m4v
+*.webm
+*.jpg
+*.jpeg
+*.png
+*.webp
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# 测试
 .pytest_cache/
+.coverage
+htmlcov/
