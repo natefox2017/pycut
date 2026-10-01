@@ -22,7 +22,7 @@ from .categorize import REVIEW_CATEGORY
 from .config import CATEGORIES, SliceRules
 from .media import (MediaInfo, detect_scenes, extract_frames_batch,
                     mean_volume_db, probe)
-from .slicer import plan_cuts
+from .slicer import plan_cuts, snap_cuts_to_speech
 
 
 @dataclass
@@ -34,6 +34,7 @@ class SegmentEvidence:
     frames: list[str] = field(default_factory=list)  # 相对路径
     has_audio: bool = False
     volume_db: float | None = None
+    speech: str = ""  # 本段内的转录话术（句子对齐后应为完整句子）
 
 
 @dataclass
@@ -64,8 +65,24 @@ class EvidenceBuilder:
     def build(self, src: Path, md5: str, pack_root: Path) -> Path:
         info = probe(src)
         scenes = detect_scenes(src, self.rules.scene_threshold)
-        # 初分段：用切点规划做粗分（AI 可在此基础上合并/拆分/调整）
+        # 初分段：场景规划
         cuts = plan_cuts(info.duration, scenes, self.rules)
+        # 句子对齐：转录话术，把切点吸附到句子边界（有话术必须说完一句）
+        sentences: list[tuple[float, float, str]] = []
+        if info.has_audio:
+            try:
+                from .speech import available as stt_available, transcribe
+                if stt_available():
+                    print("  🎙 转录话术取句子时间戳...")
+                    segs = transcribe(src)
+                    sentences = [(s.start, s.end, s.text) for s in segs]
+                    cuts = snap_cuts_to_speech(
+                        cuts, [(s, e) for s, e, _ in sentences], self.rules)
+                    print(f"  句子对齐后 {len(cuts)} 段，共 {len(sentences)} 句")
+                else:
+                    print("  ⚠ faster-whisper 不可用，跳过句子对齐")
+            except Exception as ex:
+                print(f"  ⚠ 转录失败({str(ex)[:80]})，用纯场景切点")
         pack = pack_root / f"{md5[:8]}_{_safe_name(src.stem)}"
         frames_dir = pack / "frames"
         frames_dir.mkdir(parents=True, exist_ok=True)
@@ -78,10 +95,13 @@ class EvidenceBuilder:
                 fp = frames_dir / f"seg_{i:03d}_f{j}.jpg"
                 fps.append(f"frames/{fp.name}")
                 frame_jobs.append((min(t, e - 0.1), fp))
+            # 本段内的话术（句子对齐后应为完整句子）
+            speech = " ".join(t for ss, ee, t in sentences
+                              if ss >= s - 0.3 and ee <= e + 0.3)
             segments.append(SegmentEvidence(
                 index=i, start=round(s, 2), end=round(e, 2),
                 duration=round(e - s, 2), frames=fps,
-                has_audio=info.has_audio))
+                has_audio=info.has_audio, speech=speech))
         # 单次解码批量抽帧（更快更稳）
         extract_frames_batch(src, frame_jobs, width=480)
 
