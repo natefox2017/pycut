@@ -12,8 +12,10 @@ import argparse
 import sys
 from pathlib import Path
 
+from .analyze import EvidenceBuilder
 from .config import DriveLayout, SliceRules
 from .drive import DriveClient, DriveFile
+from .ledger import Ledger
 from .pipeline import SlicePipeline
 
 WORKDIR = Path.home() / "workspace" / "pycut" / "run"
@@ -46,10 +48,42 @@ def cmd_scan(args) -> int:
     return 0
 
 
+def cmd_analyze(args) -> int:
+    """AI 分析：下载 -> 建证据包（分段+代表帧）-> 输出待 AI 决策。"""
+    client, layout, rules = _client(), DriveLayout(), SliceRules()
+    pack_root = WORKDIR / "review_pack"
+    pack_root.mkdir(parents=True, exist_ok=True)
+    builder = EvidenceBuilder(rules)
+    ledger = Ledger(client, layout.project_root_id,
+                    layout.ledger_name, WORKDIR).load()
+    n = 0
+    for d in _resolve_paths(client, layout, args.path):
+        for v in sorted([f for f in client.list_folder(d.id) if f.is_video],
+                        key=lambda f: f.size):
+            if ledger.is_processed(v.md5 or ""):
+                continue
+            local = WORKDIR / "downloads" / v.name
+            client.download(v, local)
+            md5 = v.md5 or DriveClient.md5_of(local)
+            pack = builder.build(local, md5, pack_root)
+            local.unlink(missing_ok=True)
+            print(f"📦 {v.name} -> {pack}")
+            n += 1
+            if n >= args.limit:
+                break
+        if n >= args.limit:
+            break
+    print(f"\n共生成 {n} 个证据包，AI 看帧后填写各包内 decisions.json，"
+          f"改名为 <md5>.json 放入 --decisions 目录再跑 slice")
+    return 0
+
+
 def _run_mode(args, mode: str) -> int:
     client, layout, rules = _client(), DriveLayout(), SliceRules()
     pipe = SlicePipeline(client, layout, rules, WORKDIR,
-                         dry_run=args.dry_run)
+                         dry_run=args.dry_run,
+                         decisions_dir=Path(args.decisions)
+                         if getattr(args, "decisions", None) else None)
     sources: list[DriveFile] = []
     for d in _resolve_paths(client, layout, args.path):
         vids = pipe.scan(d.id)
@@ -86,7 +120,15 @@ def main(argv=None) -> int:
     p = sub.add_parser("slice", help="功能一：长视频切片整理")
     p.add_argument("--path", action="append", required=True)
     p.add_argument("--dry-run", action="store_true", help="只下载处理，不上传/不写台账")
+    p.add_argument("--decisions", default=None,
+                   help="AI 决策目录（<md5>.json），有则用 AI 切点+分类代替机械规划")
     p.set_defaults(fn=cmd_slice)
+
+    p = sub.add_parser("analyze", help="AI 分析：生成证据包供 AI 看帧决策")
+    p.add_argument("--path", action="append", required=True,
+                   help="网盘相对路径，如 颗粒/爆款素材/抖音（可多次）")
+    p.add_argument("--limit", type=int, default=1, help="最多处理几个视频")
+    p.set_defaults(fn=cmd_analyze)
 
     p = sub.add_parser("import-shorts", help="功能一：短视频直接入库（不切割）")
     p.add_argument("--path", action="append", required=True)
