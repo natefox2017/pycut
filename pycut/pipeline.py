@@ -10,6 +10,7 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+from .analyze import decisions_to_cuts, load_decisions
 from .categorize import decide_category
 from .config import (CATEGORIES, REVIEW_CATEGORY, DriveLayout, SliceRules,
                      SourceSpec)
@@ -39,7 +40,8 @@ class SlicePipeline:
     def __init__(self, client: DriveClient, layout: DriveLayout,
                  rules: SliceRules, workdir: Path,
                  keyword_map: dict[str, str] | None = None,
-                 dry_run: bool = False):
+                 dry_run: bool = False,
+                 decisions_dir: Path | None = None):
         self.client = client
         self.layout = layout
         self.rules = rules
@@ -49,6 +51,9 @@ class SlicePipeline:
         self.out_dir = workdir / "outputs"
         self.keyword_map = keyword_map or {}
         self.dry_run = dry_run
+        #: AI 决策目录：若包含 <md5>.json（decisions.json 改名），则用 AI 决策
+        #: 代替机械切点规划。None 表示纯机械模式。
+        self.decisions_dir = decisions_dir
         for d in (self.dl_dir, self.work, self.out_dir):
             d.mkdir(parents=True, exist_ok=True)
         # 网盘切片库目录（分类子目录按需创建，缓存 id）
@@ -161,6 +166,10 @@ class SlicePipeline:
 
     def _slice_video(self, local: Path, md5: str,
                      info: MediaInfo) -> list[tuple[Path, str]]:
+        # AI 决策优先：decisions_dir/<md5>.json 存在则用 AI 切点+分类
+        ai_plan = self._load_ai_plan(md5)
+        if ai_plan is not None:
+            return self._export_ai_plan(local, md5, ai_plan)
         scenes = detect_scenes(local, self.rules.scene_threshold)
         cuts = plan_cuts(info.duration, scenes, self.rules)
         out: list[tuple[Path, str]] = []
@@ -178,6 +187,31 @@ class SlicePipeline:
             final = self.out_dir / f"{md5[:8]}_{i + 1:03d}_{category}.mp4"
             dst.rename(final)
             out.append((final, category))
+        return out
+
+    def _load_ai_plan(self, md5: str,
+                      ) -> list[tuple[tuple[float, float], str, str]] | None:
+        """读取 AI 决策（decisions_dir/<md5>.json），没有则返回 None。"""
+        if self.decisions_dir is None:
+            return None
+        for cand in (self.decisions_dir / f"{md5}.json",
+                     self.decisions_dir / f"{md5[:8]}.json"):
+            if cand.exists():
+                return decisions_to_cuts(load_decisions(cand))
+        return None
+
+    def _export_ai_plan(self, local: Path, md5: str,
+                        plan: list[tuple[tuple[float, float], str, str]]
+                        ) -> list[tuple[Path, str]]:
+        out: list[tuple[Path, str]] = []
+        for i, ((s, e), category, _reason) in enumerate(plan):
+            dst = self.out_dir / f"{md5[:8]}_{i + 1:03d}_{category}.mp4"
+            export_slice(local, s, e, dst, self.rules)
+            ok, reason = qc_ok(dst, self.rules, expect_dur=e - s)
+            if not ok:
+                dst.unlink(missing_ok=True)
+                continue
+            out.append((dst, category))
         return out
 
     def _import_short(self, local: Path, md5: str, info: MediaInfo,
