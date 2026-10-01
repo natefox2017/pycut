@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 from .analyze import EvidenceBuilder
+from .clean import CleanReport, organize as organize_folder
 from .config import DriveLayout, SliceRules
 from .drive import DriveClient, DriveFile
 from .ledger import Ledger
@@ -100,6 +101,33 @@ def _run_mode(args, mode: str) -> int:
     return 0 if fail == 0 else 1
 
 
+def cmd_organize(args) -> int:
+    """整理视频：清理重复文件与系统垃圾（进回收站，可撤销）。"""
+    client, layout = _client(), DriveLayout()
+    for p in args.path:
+        parts = [x for x in p.strip("/").split("/") if x]
+        folder = client.resolve_path(layout.project_root_id, *parts)
+        report = organize_folder(client, folder.id, root_name=p,
+                                 dry_run=args.dry_run)
+        print(f"\n📁 {p}")
+        print(report.summary())
+        if report.junk:
+            print("  垃圾文件:")
+            for f in report.junk[:20]:
+                print(f"    - {f.name}")
+        if report.duplicates:
+            print("  重复冗余（已保留一份）:")
+            for f in report.duplicates[:20]:
+                print(f"    - {f.name} ({f.size/1e6:.0f}MB)")
+        if report.docs:
+            print("  用户文档（未删除，请确认）:")
+            for f in report.docs:
+                print(f"    - {f.name}")
+        if args.dry_run:
+            print("  [dry-run] 未实际删除")
+    return 0
+
+
 def cmd_slice(args) -> int:
     return _run_mode(args, "slice")
 
@@ -129,6 +157,12 @@ def main(argv=None) -> int:
                    help="网盘相对路径，如 颗粒/爆款素材/抖音（可多次）")
     p.add_argument("--limit", type=int, default=1, help="最多处理几个视频")
     p.set_defaults(fn=cmd_analyze)
+
+    p = sub.add_parser("organize", help="整理视频：清理重复文件与系统垃圾")
+    p.add_argument("--path", action="append", required=True,
+                   help="网盘相对路径，如 颗粒（可多次）")
+    p.add_argument("--dry-run", action="store_true", help="只报告，不删除")
+    p.set_defaults(fn=cmd_organize)
 
     p = sub.add_parser("import-shorts", help="功能一：短视频直接入库（不切割）")
     p.add_argument("--path", action="append", required=True)
