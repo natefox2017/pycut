@@ -41,16 +41,63 @@ def available() -> bool:
 
 
 _TRANSCRIBE_SCRIPT = r"""
-import json, sys
+import json, sys, wave
+import numpy as np
 from faster_whisper import WhisperModel
 src, model_name = sys.argv[1], sys.argv[2]
 model = WhisperModel(model_name, device="cpu", compute_type="int8")
-segments, _info = model.transcribe(src, language="zh", vad_filter=True,
+# 不走 faster-whisper 内置的 av 解码（PyAV 19 移除了 metadata_errors 参数，
+# 版本不兼容）：wav 已是 16k 单声道，直接用标准库解码成 float32 数组
+with wave.open(src, "rb") as w:
+    assert w.getnchannels() == 1 and w.getsampwidth() == 2 and w.getframerate() == 16000
+    audio = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32) / 32768.0
+segments, _info = model.transcribe(audio, language="zh", vad_filter=True,
     vad_parameters=dict(min_silence_duration_ms=400))
 segs = [{"start": round(s.start, 2), "end": round(s.end, 2),
          "text": s.text.strip()} for s in segments if s.text.strip()]
 print(json.dumps(segs, ensure_ascii=False))
 """
+
+
+def refine_sentences(segs: list[SpeechSegment],
+                     max_dur: float = 9.0) -> list[SpeechSegment]:
+    """过长句子按标点拆分。
+
+    STT 有时会把多句并成一段很长的"句子"；超过 max_dur 的按标点
+    （，。？！；：）拆分，拆分时间按字数比例估算。保证切点规划有足够的
+    句子边界可用。
+    """
+    import re
+    out: list[SpeechSegment] = []
+    for s in segs:
+        dur = s.end - s.start
+        if dur <= max_dur:
+            out.append(s)
+            continue
+        # 找标点拆分点
+        parts = re.split(r"([，。？！；：])", s.text)
+        # 重组为带标点的片段
+        chunks: list[str] = []
+        buf = ""
+        for p in parts:
+            buf += p
+            if p in "，。？！；：":
+                chunks.append(buf.strip())
+                buf = ""
+        if buf.strip():
+            chunks.append(buf.strip())
+        chunks = [c for c in chunks if c]
+        if len(chunks) < 2:
+            out.append(s)  # 无标点可拆，原样保留
+            continue
+        total = sum(len(c) for c in chunks)
+        t = s.start
+        for i, c in enumerate(chunks):
+            frac = len(c) / total
+            e = s.end if i == len(chunks) - 1 else t + dur * frac
+            out.append(SpeechSegment(round(t, 2), round(e, 2), c))
+            t = e
+    return out
 
 
 def transcribe(src: Path, model: str = MODEL,
