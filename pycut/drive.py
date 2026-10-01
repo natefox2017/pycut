@@ -1,4 +1,17 @@
-"""Google Drive 客户端：基于 hatch_gws_cli 的列表 / 下载 / 上传 / 建目录封装。"""
+"""Google Drive 客户端。
+
+云电脑说明（必读）：
+- 所有 Drive 操作经 `hatch_gws_cli drive` 执行。这是 Hatch 云电脑运行时自带的
+  Google Workspace CLI，认证由运行时托管（OAuth token 对代码透明），开箱即用。
+- 因此本模块在云电脑上零配置即可跑；但它**只能在 Hatch 云电脑上跑**——
+  `hatch_gws_cli` 不存在于其他机器。
+- 若将来要搬到用户本地电脑，需新增一个 DriveBackend 实现（Google 官方
+  OAuth API），并让 DriveClient 按环境自动选择后端。接口保持不变：
+  list_folder / find_child / ensure_folder / resolve_path / download /
+  upload / update_content / trash / move / md5_of。
+- 上传用 `+upload` helper（自动处理 multipart）；删除一律进回收站（trash），
+  不做永久删除。
+"""
 from __future__ import annotations
 
 import hashlib
@@ -29,7 +42,13 @@ class DriveFile:
 
 
 class DriveClient:
-    """所有 Drive 操作经 hatch_gws_cli 执行。"""
+    """所有 Drive 操作经 hatch_gws_cli 执行（云电脑运行时自带，认证免配置）。
+
+    约定：
+    - folder_id 优先用 DriveLayout 里的常量，不硬编码在业务代码里；
+    - 下载/上传的本地中转目录统一用 cli.WORKDIR（run/downloads 等）；
+    - 批量操作前先用 list_folder 确认目标存在，避免误建目录。
+    """
 
     def _run(self, *args: str) -> dict:
         r = subprocess.run(
