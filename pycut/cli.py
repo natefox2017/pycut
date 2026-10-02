@@ -460,7 +460,7 @@ def cmd_mix(args) -> int:
         # 字幕
         ass_path = workdir / f"mix_{seed}.ass"
         write_ass(script, plan.target_duration, plan.subtitle_style,
-                  fonts, ass_path)
+                  fonts, ass_path, width=plan.width, height=plan.height)
         # 渲染
         out_path = workdir / f"成片_{batch}_{i+1:02d}.mp4"
         # 话术音频：有则用，无则生成静音轨（按 Ta）
@@ -527,6 +527,7 @@ def _record_mix_ledger(client, layout, batch: str, idx: int,
         f"{'抽帧' if s.drop_frames else ''}"
         f"{'模糊bg' if s.blur_bg else ''}"
         f"{'字幕模糊' if s.blur_sub_band else ''}"
+        f"{'暗角' if s.vignette else ''}"
         for s in plan.segments)
     trans = ",".join({s.transition for s in plan.segments})
     wm = f"/水印:{plan.watermark_text}" if plan.watermark_text else ""
