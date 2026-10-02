@@ -112,6 +112,16 @@ def test_zoom_103_in_filter():
     assert "scale=iw*1.03" in f
 
 
+def test_zoom_103_safe_for_small_input():
+    """小分辨率源：zoom_103 先缩放到目标尺寸再放大，不越界。"""
+    seg = MixPlanner(seed=5)._plan_segment(_clip("a.mp4"), False, 6.0, 1.0)
+    seg.zoom_103 = True
+    seg.crop_shift = None
+    f = segment_filter(seg, 0, w=1080, h=1920)
+    # 应该先 scale 到 1080x1920
+    assert f.index("scale=1080:1920") < f.index("scale=iw*1.03")
+
+
 def test_drop_frames_in_filter():
     seg = MixPlanner(seed=5)._plan_segment(_clip("a.mp4"), False, 6.0, 1.0)
     seg.drop_frames = True
