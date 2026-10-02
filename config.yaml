@@ -50,3 +50,8 @@ effects:
   subtitle_blur: true
   # 随机封面帧
   cover_frame: true
+  # 贴纸（2026-10-02 用户要求混剪加贴纸）
+  # 0=关闭，1=开启；位置 1=左上 2=右上 3=左下 4=右下（0=随机）
+  sticker: 1
+  sticker_size: 160
+  sticker_pos: 0

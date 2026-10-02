@@ -436,16 +436,24 @@ def cmd_mix(args) -> int:
     dl_dir.mkdir(parents=True, exist_ok=True)
 
     # 3b. 方式二音频拼接：开头原声 + 话术配音（在 workdir 定义后执行）
+    #     先 loudnorm 统一两段音量（-16 LUFS），再拼接，避免配音听不清
     if opening_audio_path and audio_path and opening_dur > 0:
         concat_path = workdir / "concat_audio.m4a"
         if not concat_path.exists():
-            # 用 ffmpeg concat 拼接两段音频
             import subprocess as _sp
+            op_norm = workdir / "opening_norm.m4a"
+            na_norm = workdir / "narration_norm.m4a"
+            for _src, _dst in [(opening_audio_path, op_norm),
+                               (audio_path, na_norm)]:
+                _sp.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                         "-i", str(_src), "-af",
+                         "loudnorm=I=-16:TP=-1.5:LRA=11",
+                         "-c:a", "aac", str(_dst)], check=True)
             _sp.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-                     "-i", str(opening_audio_path), "-i", str(audio_path),
+                     "-i", str(op_norm), "-i", str(na_norm),
                      "-filter_complex", "[0:a][1:a]concat=n=2:v=0:a=1",
                      "-c:a", "aac", str(concat_path)], check=True)
-            print(f"🎙 音频已拼接: {concat_path.name}")
+            print(f"🎙 音频已拼接（音量已统一）: {concat_path.name}")
         audio_path = concat_path  # 后续渲染用拼接后的音频
 
     # 5. 逐条规划渲染

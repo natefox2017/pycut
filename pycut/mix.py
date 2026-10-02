@@ -100,6 +100,9 @@ class MixPlan:
     bitrate: str = "3000k"
     subtitle_style: int = 0
     watermark_text: str = ""       # 移动水印文字（空=不加）
+    sticker_path: str = ""         # 贴纸图片路径（空=不加）
+    sticker_pos: str = "top-right" # 贴纸位置：top-left/top-right/bottom-left/bottom-right
+    sticker_size: int = 160        # 贴纸尺寸（像素，配置 effects.sticker_size）
     width: int = MIX_WIDTH          # 输出分辨率（§9：吃力时降 720x1280）
     height: int = MIX_HEIGHT
     fps: int = MIX_FPS
@@ -250,6 +253,31 @@ class MixPlanner:
             raise ValueError("开头池为空，无法规划")
         plan = MixPlan(seed=self.seed, target_duration=round(audio_duration, 2))
         used_prefixes: set[str] = set()
+
+        # 贴纸：按 seed 随机选（2026-10-02 用户要求混剪加贴纸）
+        # 中/强强度 70% 概率加贴纸，轻强度不加
+        # 配置 effects.sticker: 1=开 0=关；sticker_pos: 0=随机 1-4=四角
+        from .settings import get as _get
+        if int(_get("effects", "sticker", default=1) or 0):
+            p_sticker = {1: 0.0, 2: 0.7, 3: 0.7}.get(
+                {"轻": 1, "中": 2, "强": 3}.get(self.intensity, 2), 0.7)
+            if self.rng.random() < p_sticker:
+                import random as _r
+                _rr = _r.Random(self.seed * 97 + 13)
+                stickers_dir = Path(__file__).parent.parent / "assets" / "stickers"
+                if stickers_dir.exists():
+                    files = list(stickers_dir.glob("*.png"))
+                    if files:
+                        plan.sticker_path = str(_rr.choice(files))
+                        pos_names = ["top-left", "top-right",
+                                     "bottom-left", "bottom-right"]
+                        cfg_pos = int(_get("effects", "sticker_pos", default=0) or 0)
+                        if 1 <= cfg_pos <= 4:
+                            plan.sticker_pos = pos_names[cfg_pos - 1]
+                        else:
+                            plan.sticker_pos = _rr.choice(pos_names)
+                        plan.sticker_size = int(
+                            _get("effects", "sticker_size", default=160) or 160)
 
         # 1. 开头：开头池轮换（爆款同款开头）
         hook = self._choose_hook(hook_pool)
@@ -630,7 +658,24 @@ def render(plan: MixPlan, audio_path: Path, out_path: Path,
                f"x='(w-text_w)/2+(w/3)*sin(2*PI*t/{period})':"
                f"y='h*0.15+(h/10)*cos(2*PI*t/{period+2})'[vwm]")
         vlabel = "[vwm]"
-    # 字幕烧录：在水印之后
+    # 贴纸叠加：在水印之后、字幕之前（2026-10-02 用户要求混剪加贴纸）
+    # 用 -loop 1 额外输入（movie filter 的 loop 会挂起）
+    # has_sticker/sticker_idx 在后面 cmd 组装时定义，这里先算
+    _has_sticker = bool(plan.sticker_path and Path(plan.sticker_path).exists())
+    _sticker_idx = n + 1 if _has_sticker else -1
+    if _has_sticker:
+        pos_map = {
+            "top-left": "30:30",
+            "top-right": "W-w-30:30",
+            "bottom-left": "30:H-h-30",
+            "bottom-right": "W-w-30:H-h-30",
+        }
+        pos = pos_map.get(plan.sticker_pos, pos_map["top-right"])
+        sz = getattr(plan, "sticker_size", 160) or 160
+        fg += (f";[{_sticker_idx}:v]scale={sz}:{sz}[st];"
+               f"{vlabel}[st]overlay={pos}:shortest=1[vst]")
+        vlabel = "[vst]"
+    # 字幕烧录：在水印/贴纸之后
     if ass_path and ass_path.exists():
         fg += f";{vlabel}{burn_filter(ass_path, fonts_dir)}[vsub]"
         vlabel = "[vsub]"
@@ -652,6 +697,10 @@ def render(plan: MixPlan, audio_path: Path, out_path: Path,
     for s in segs:
         cmd += ["-i", str(s.clip.local_path)]
     cmd += ["-i", str(audio_path)]
+    # 贴纸用 -loop 1 做额外输入（movie filter 的 loop 会挂起，改用输入方式）
+    # _has_sticker/_sticker_idx 已在 filter 构建时算好
+    if _has_sticker:
+        cmd += ["-loop", "1", "-i", str(plan.sticker_path)]
     cmd += ["-filter_complex", fg,
             "-map", vlabel, "-map", "[aout]",
             "-t", f"{ta:.2f}",
