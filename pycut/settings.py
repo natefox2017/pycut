@@ -36,3 +36,16 @@ def reload():
     """清缓存，下次 load 重新读文件。"""
     global _cache
     _cache = None
+
+
+# 强度数字映射：1=轻, 2=中, 3=强（配置用数字，代码内部用中文）
+INTENSITY_MAP = {1: "轻", 2: "中", 3: "强"}
+
+
+def get_intensity() -> str:
+    """从配置读取强度（数字），映射为中文供内部使用。"""
+    v = get("mix", "intensity", default=2)
+    if isinstance(v, int):
+        return INTENSITY_MAP.get(v, "中")
+    # 兼容旧的中文值
+    return v if v in ("轻", "中", "强") else "中"
