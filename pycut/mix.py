@@ -544,7 +544,8 @@ def render(plan: MixPlan, audio_path: Path, out_path: Path,
         fontfile = ""
         fd = fonts_dir or assets_fonts_dir()
         for fp in fd.glob("*.ttf"):
-            fontfile = f":fontfile='{str(fp).replace(chr(39), chr(92)+chr(39)}'"
+            safe_fp = str(fp).replace("'", "\\'")
+            fontfile = f":fontfile='{safe_fp}'"
             break
         # x/y 按正弦移动，周期按 seed 变化
         period = 7 + (plan.seed % 5)
