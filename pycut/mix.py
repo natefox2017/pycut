@@ -1,14 +1,17 @@
 """混剪成片（二期）：用切片库批量混剪，核心目标是去重。
 
-去重优先级（用户 2026-10-02 确认，平台查重主要靠暗水印追踪）：
-1. 特效层（最高）：时域噪点破坏暗水印提取，N 按 seed 在 10~25 变化，
+去重优先级（2026-10-02 调研结论，针对抖音/快手）：
+1. 内容指纹层：抽帧感知哈希 + 音频指纹 + OCR 是查重主力。
+   对策：1.03x 放大、抽帧、移动水印、字幕带模糊、打乱重排。
+2. 特效层：时域噪点破坏像素级指纹，N 按 seed 在 10~25 变化，
    同一源切片在不同成片里噪点 pattern 完全不同。切片库本身永远干净。
-2. 文件层：彻底重编码 —— 换 GOP 结构、换码率、换编码参数，
-   输出二进制特征与源完全不同。
-3. 素材调度层：usage 均衡 + 同一条成片不重复高重叠 source range。
-4. 单片段变换层（辅助）：裁剪位移 / 色调 / 变速；钩子只做裁剪位移+色调二选一，
+3. 文件层：彻底重编码 —— 换 GOP 结构、换码率、换编码参数，
+   输出二进制特征与源完全不同。（注：只改 MD5 基本无效）
+4. 素材调度层：usage 均衡 + 同一条成片不重复高重叠 source range。
+5. 单片段变换层（辅助）：裁剪位移 / 色调 / 变速；钩子只做裁剪位移+色调二选一，
    不做镜像/变速（保护钩子效果）。
 
+注：暗水印无公开实证，不作为核心去重目标。
 原则：音频是主轨道，视频向音频看齐（ffprobe 测话术音频时长 Ta）。
 """
 from __future__ import annotations
@@ -20,7 +23,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .config import CATEGORIES
-from .media import probe
 
 #: 混剪默认规格（与切片库一致）
 MIX_WIDTH = 1080
@@ -202,7 +204,7 @@ class MixPlanner:
                 self.rng.choice(cands[:min(3, len(cands))])
             picked.append(clip)
             used_prefixes.add(clip.source_prefix)
-            self._bump_usage(clip)
+            # usage 在 plan() 里统一 bump，这里不重复
             ci += 1
         return picked
 
@@ -400,10 +402,6 @@ class MixPlanner:
 # 滤镜链构建
 # ---------------------------------------------------------------------------
 
-def _escape_filter_text(s: str) -> str:
-    return s.replace("'", r"'\''")
-
-
 def segment_filter(seg: SegmentPlan, idx: int,
                    w: int = MIX_WIDTH, h: int = MIX_HEIGHT,
                    fps: int = MIX_FPS) -> str:
@@ -540,11 +538,17 @@ def render(plan: MixPlan, audio_path: Path, out_path: Path,
     # 用 drawtext 做正弦移动，半透明，不遮挡主体
     vlabel = "[vout]"
     if plan.watermark_text:
-        from .subtitles import _escape_drawtext
+        from .subtitles import _escape_drawtext, assets_fonts_dir
         wt = _escape_drawtext(plan.watermark_text)
+        # 中文字体：用 assets/fonts 下的字体，否则 drawtext 显示方框
+        fontfile = ""
+        fd = fonts_dir or assets_fonts_dir()
+        for fp in fd.glob("*.ttf"):
+            fontfile = f":fontfile='{str(fp).replace(chr(39), chr(92)+chr(39)}'"
+            break
         # x/y 按正弦移动，周期按 seed 变化
         period = 7 + (plan.seed % 5)
-        fg += (f";{vlabel}drawtext=text='{wt}':fontsize=36:"
+        fg += (f";{vlabel}drawtext=text='{wt}'{fontfile}:fontsize=36:"
                f"fontcolor=white@0.7:borderw=2:bordercolor=black@0.5:"
                f"x='(w-text_w)/2+(w/3)*sin(2*PI*t/{period})':"
                f"y='h*0.15+(h/10)*cos(2*PI*t/{period+2})'[vwm]")
