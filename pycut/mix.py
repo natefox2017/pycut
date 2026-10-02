@@ -76,6 +76,7 @@ class SegmentPlan:
     drop_frames: bool = False    # 抽帧：每 30 帧丢 1 帧
     blur_bg: bool = False        # 横屏素材：模糊背景填充转竖屏
     blur_sub_band: bool = False  # 底部字幕带模糊（盖掉源片烧录字幕）
+    vignette: bool = False       # 暗角（§3.4 特效层）
     # 结构层
     transition: str = "hardcut"  # hardcut / fade / zoom
     # 时长对齐后
@@ -92,6 +93,9 @@ class MixPlan:
     bitrate: str = "3000k"
     subtitle_style: int = 0
     watermark_text: str = ""       # 移动水印文字（空=不加）
+    width: int = MIX_WIDTH          # 输出分辨率（§9：吃力时降 720x1280）
+    height: int = MIX_HEIGHT
+    fps: int = MIX_FPS
 
     @property
     def video_duration(self) -> float:
@@ -149,6 +153,59 @@ class MixPlanner:
         self.rng.shuffle(pool)
         return pick_lowest_usage(pool, self.usage)
 
+    def _choose_by_sentences(self, library: dict[str, list[ClipInfo]],
+                             used_prefixes: set[str], script: str,
+                             audio_duration: float,
+                             hook_seconds: float) -> list[ClipInfo]:
+        """按句子分段时间轴选片（§4）：每句按字数估算时长，选对应时长的切片。
+
+        中文约 4.5 字/秒。句子与切片一一对应，口播类不硬切。
+        """
+        import re
+        # 按标点分句
+        sentences = [s.strip() for s in re.split(r"[，。！？；]", script)
+                     if s.strip()]
+        if not sentences:
+            return self._choose_middles(library, used_prefixes,
+                                        audio_duration - hook_seconds + 2.0)
+        # 每句估算时长
+        total_chars = sum(len(s) for s in sentences)
+        if total_chars == 0:
+            return self._choose_middles(library, used_prefixes,
+                                        audio_duration - hook_seconds + 2.0)
+        avail = audio_duration - hook_seconds
+        picked: list[ClipInfo] = []
+        cats = self.MIDDLE_CATEGORIES[:]
+        self.rng.shuffle(cats)
+        ci = 0
+        for sent in sentences:
+            target = avail * len(sent) / total_chars
+            # 找时长接近的切片（±30% 内优先）
+            cands = []
+            for cat in cats:
+                for c in library.get(cat, []):
+                    if c.source_prefix in used_prefixes:
+                        continue
+                    if c.file_id in {p.file_id for p in picked}:
+                        continue
+                    cands.append(c)
+            if not cands:
+                break
+            # 按时长接近度 + usage 综合排序
+            def _score(c: ClipInfo) -> tuple:
+                dur_diff = abs(c.duration - target) / max(target, 0.1)
+                use = self.usage.get(c.file_id or c.name, 0)
+                return (dur_diff, use, self.rng.random())
+            cands.sort(key=_score)
+            # 取前 3 个中最优的（带一点随机性）
+            clip = cands[0] if len(cands) == 1 else \
+                self.rng.choice(cands[:min(3, len(cands))])
+            picked.append(clip)
+            used_prefixes.add(clip.source_prefix)
+            self._bump_usage(clip)
+            ci += 1
+        return picked
+
     def _choose_middles(self, library: dict[str, list[ClipInfo]],
                         used_prefixes: set[str], target: float) -> list[ClipInfo]:
         """按目标时长从中间分类池挑选；同一源前缀只用一次。"""
@@ -176,8 +233,12 @@ class MixPlanner:
         return picked
 
     def plan(self, library: dict[str, list[ClipInfo]], hook_pool: list[ClipInfo],
-             audio_duration: float, hook_seconds: float = 4.0) -> MixPlan:
-        """规划一条成片。library: 分类->切片；hook_pool: 开头候选。"""
+             audio_duration: float, hook_seconds: float = 4.0,
+             script: str = "") -> MixPlan:
+        """规划一条成片。library: 分类->切片；hook_pool: 开头候选。
+
+        script: 话术文本，有则按句子分段时间轴选片（§4），无则按总时长。
+        """
         if not hook_pool:
             raise ValueError("开头池为空，无法规划")
         plan = MixPlan(seed=self.seed, target_duration=round(audio_duration, 2))
@@ -188,9 +249,14 @@ class MixPlanner:
         used_prefixes.add(hook.source_prefix)
         self._bump_usage(hook)
 
-        # 2. 中间段：累计 ≈ Ta（允许 +2s 误差带，后续精确对齐）
-        middles = self._choose_middles(library, used_prefixes,
-                                       audio_duration - hook_seconds + 2.0)
+        # 2. 中间段：有话术按句子分段选片，无话术按总时长
+        if script.strip():
+            middles = self._choose_by_sentences(library, used_prefixes,
+                                                 script, audio_duration,
+                                                 hook_seconds)
+        else:
+            middles = self._choose_middles(library, used_prefixes,
+                                           audio_duration - hook_seconds + 2.0)
         if not middles:
             raise ValueError("切片库素材不足，无法凑齐目标时长")
         for m in middles:
@@ -316,6 +382,9 @@ class MixPlanner:
         if seg.blur_sub_band:
             seg.crop_shift = None
             seg.zoom_103 = False
+        # 暗角（§3.4 特效层）：中 30% / 强 50%，轻微不影响观看
+        p_vig = {"轻": 0.0, "中": 0.3, "强": 0.5}[self.intensity]
+        seg.vignette = r.random() < p_vig
         # 转场轮换
         seg.transition = r.choice(["hardcut", "hardcut", "fade", "zoom"])
         return seg
@@ -380,6 +449,9 @@ def segment_filter(seg: SegmentPlan, idx: int,
         f.append(f"noise=alls={n}:allf=a+t")
     else:
         f.append(f"noise=alls={n}:allf=t+u")
+    # 5c. 暗角（§3.4）：轻微，PI/5 强度
+    if seg.vignette:
+        f.append("vignette=PI/5")
     # 5b. 底部字幕带模糊（盖掉源片烧录字幕，防 OCR 查重）
     #     注：与 crop_shift/zoom_103 互斥，见 _segment_filter_sub_blur
     if seg.blur_sub_band:
@@ -428,7 +500,8 @@ def _segment_filter_blur_bg(seg: SegmentPlan, idx: int,
 
 def build_filtergraph(plan: MixPlan) -> tuple[str, bool]:
     """拼接全部片段。返回 (filter_complex, 需要 tpad 补齐)。"""
-    parts = [segment_filter(s, i) for i, s in enumerate(plan.segments)]
+    w, h, fps = plan.width, plan.height, plan.fps
+    parts = [segment_filter(s, i, w, h, fps) for i, s in enumerate(plan.segments)]
     ins = "".join(f"[v{i}]" for i in range(len(plan.segments)))
     parts.append(f"{ins}concat=n={len(plan.segments)}:v=1:a=0[vcat]")
     need_pad = plan.video_duration < plan.target_duration - 0.05
@@ -508,6 +581,58 @@ def render(plan: MixPlan, audio_path: Path, out_path: Path,
 # ---------------------------------------------------------------------------
 # 切片库加载（解析各分类 00-索引.md）
 # ---------------------------------------------------------------------------
+
+def has_text_overlay(seg: SegmentPlan) -> bool:
+    """检测切片是否有烧录文字/字幕（§3.2 禁忌：有文字的不镜像）。
+
+    方法：抽中间帧，检测底部 25% 区域的边缘密度。
+    文字区域边缘密集，无文字的自然画面边缘稀疏。
+    """
+    from .media import probe
+    import subprocess
+    import tempfile
+    p = seg.clip.local_path
+    if not p or not p.exists():
+        return True  # 保守：未知则视为有文字
+    try:
+        info = probe(p)
+        mid = info.duration / 2
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tf:
+            frame_path = tf.name
+        # 截底部 25% 区域
+        subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+             "-ss", str(mid), "-i", str(p), "-frames:v", "1",
+             "-vf", "crop=in_w:in_h*0.25:0:in_h*0.75",
+             frame_path],
+            check=True, timeout=30)
+        # 用边缘检测计算边缘像素比例
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tf2:
+            edge_path = tf2.name
+        subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+             "-i", frame_path, "-vf", "edgedetect=d_0=0.1:d_1=0.4",
+             "-frames:v", "1", edge_path],
+            check=True, timeout=30)
+        # 统计非黑像素比例（用 signalstats）
+        r = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error",
+             "-i", edge_path, "-vf", "signalstats",
+             "-frames:v", "1", "-f", "null", "-"],
+            capture_output=True, text=True, timeout=30)
+        import os
+        os.unlink(frame_path)
+        os.unlink(edge_path)
+        # 从 stderr 解析 YAVG（亮度均值，边缘越多越亮）
+        import re
+        m = re.search(r"YAVG:(\d+\.?\d*)", r.stderr)
+        if m:
+            yavg = float(m.group(1))
+            return yavg > 8.0  # 阈值：有文字时边缘亮度明显高
+        return True
+    except Exception:
+        return True  # 出错时保守处理
+
 
 def detect_blur_bg(seg: SegmentPlan) -> None:
     """探测切片宽高比，横屏（宽>高）则启用模糊背景填充。
