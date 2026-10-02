@@ -517,6 +517,16 @@ def cmd_mix(args) -> int:
         # 上传
         client.upload(out_path, batch_folder.id,
                       name=f"成片_{batch}_{i+1:02d}.mp4")
+        # 封面：从成片随机抽一帧（2026-10-02 用户确认），上传到同批次目录
+        try:
+            from .mix import extract_cover_frame
+            cover_path = workdir / f"封面_{batch}_{i+1:02d}.jpg"
+            extract_cover_frame(out_path, cover_path, seed=seed)
+            client.upload(cover_path, batch_folder.id,
+                          name=f"封面_{batch}_{i+1:02d}.jpg")
+            cover_path.unlink(missing_ok=True)
+        except Exception as e:
+            print(f"  ⚠️ 封面提取失败: {e}")
         planner.save_usage(usage_path)
         # 台账记录
         _record_mix_ledger(client, layout, batch, i + 1, plan, script)

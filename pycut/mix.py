@@ -519,6 +519,29 @@ def segment_filter(seg: SegmentPlan, idx: int,
     return f"[{idx}:v]" + ",".join(f) + f"[v{idx}]"
 
 
+def extract_cover_frame(video_path: Path, out_path: Path,
+                        seed: int | None = None) -> Path:
+    """从成片随机抽一帧做封面（2026-10-02 用户确认：首帧从视频里提取，随机）。
+    
+    用作视频封面/缩略图，改变首帧哈希。seed 不同则抽不同帧。
+    """
+    import random as _r
+    import subprocess
+    from .media import probe
+    info = probe(video_path)
+    dur = max(info.duration, 1.0)
+    rng = _r.Random(seed) if seed is not None else _r.Random()
+    # 避开前 0.5s（可能黑场）和最后 0.5s，随机取一帧
+    t = round(rng.uniform(0.5, max(0.6, dur - 0.5)), 2)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+         "-ss", f"{t:.2f}", "-i", str(video_path),
+         "-frames:v", "1", "-q:v", "2", str(out_path)],
+        check=True)
+    return out_path
+
+
 def _segment_filter_sub_blur(seg: SegmentPlan, idx: int, w: int, h: int,
                              fps: int, prefix_filters: list[str]) -> str:
     """底部 18% 字幕带模糊。prefix_filters 是已拼好的前置滤镜（噪点等）。"""
