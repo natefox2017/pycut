@@ -533,10 +533,10 @@ def segment_filter(seg: SegmentPlan, idx: int,
     #     注：与 crop_shift/zoom_103 互斥，见 _segment_filter_sub_blur
     if seg.blur_sub_band:
         return _segment_filter_sub_blur(seg, idx, w, h, fps, f)
-    # 6. 转场
-    d = max(seg.out_duration, 0.6)
+    # 6. 转场（2026-10-02 用户反馈：0.25s 太弱看不见，改 0.5s）
+    d = max(seg.out_duration, 1.0)
     if seg.transition == "fade":
-        f.append(f"fade=t=in:st=0:d=0.25,fade=t=out:st={d - 0.25:.2f}:d=0.25")
+        f.append(f"fade=t=in:st=0:d=0.5,fade=t=out:st={d - 0.5:.2f}:d=0.5")
     elif seg.transition == "zoom":
         # 轻微推进缩放（整段 6% 放大），居中裁剪回规格
         # 先缩放到目标尺寸再放大，避免小分辨率源越界
