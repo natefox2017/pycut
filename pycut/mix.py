@@ -660,9 +660,9 @@ def render(plan: MixPlan, audio_path: Path, out_path: Path,
         vlabel = "[vwm]"
     # 贴纸叠加：在水印之后、字幕之前（2026-10-02 用户要求混剪加贴纸）
     # 用 -loop 1 额外输入（movie filter 的 loop 会挂起）
-    # has_sticker/sticker_idx 在后面 cmd 组装时定义，这里先算
+    # _has_sticker/_sticker_idx 在后面 cmd 组装时定义，这里先算
     _has_sticker = bool(plan.sticker_path and Path(plan.sticker_path).exists())
-    _sticker_idx = n + 1 if _has_sticker else -1
+    _sticker_idx = len(segs) + 1 if _has_sticker else -1
     if _has_sticker:
         pos_map = {
             "top-left": "30:30",
