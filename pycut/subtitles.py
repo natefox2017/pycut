@@ -142,7 +142,8 @@ def _highlight_keywords(line: str) -> str:
 
 
 def write_ass(text: str, total_duration: float, style_idx: int,
-              fonts: dict[str, str], out_path: Path) -> Path:
+              fonts: dict[str, str], out_path: Path,
+              width: int = 1080, height: int = 1920) -> Path:
     """生成 .ass 字幕文件。style_idx: 0=背景框 1=彩色文字 2=换字体。"""
     lines = split_lines(text)
     if not lines:
@@ -150,19 +151,23 @@ def write_ass(text: str, total_duration: float, style_idx: int,
     times = distribute_times(lines, total_duration)
     font_main = fonts.get(FONT_SANS_BOLD, FONT_SANS_BOLD)
     font_alt = fonts.get(FONT_ROUND, font_main)
+    # 字号按分辨率缩放（1080p=64）
+    fs = int(64 * width / 1080)
 
-    L = [ASS_HEADER.rstrip()]
+    header = ASS_HEADER.replace("PlayResX: 1080", f"PlayResX: {width}")
+    header = header.replace("PlayResY: 1920", f"PlayResY: {height}")
+    L = [header.rstrip()]
     if style_idx == 0:
         # 背景框：BorderStyle=3 半透明黑底
-        L.append(f"Style: sub,{font_main},64,&H00FFFFFF,&H000019FF,&H00000000,"
+        L.append(f"Style: sub,{font_main},{fs},&H00FFFFFF,&H000019FF,&H00000000,"
                  f"&H80000000,-1,0,0,0,100,100,0,0,3,2,0,2,30,30,120,1")
     elif style_idx == 1:
         # 彩色文字：白字描边，关键词行内标红
-        L.append(f"Style: sub,{font_main},64,&H00FFFFFF,&H000019FF,&H80000000,"
+        L.append(f"Style: sub,{font_main},{fs},&H00FFFFFF,&H000019FF,&H80000000,"
                  f"&H00000000,-1,0,0,0,100,100,0,0,1,3,0,2,30,30,120,1")
     else:
         # 换字体：圆体
-        L.append(f"Style: sub,{font_alt},66,&H00FFF0E0,&H000019FF,&H80000000,"
+        L.append(f"Style: sub,{font_alt},{fs+2},&H00FFF0E0,&H000019FF,&H80000000,"
                  f"&H00000000,-1,0,0,0,100,100,0,0,1,3,0,2,30,30,120,1")
     L.append("")
     L.append("[Events]")
