@@ -1,0 +1,52 @@
+# PyCut 默认配置（2026-10-02）
+# 用户要求：默认配置放 git，程序从这里读取
+
+# --- 混剪默认参数 ---
+mix:
+  # 默认成片时长（秒），前后误差 ±5 秒
+  target_duration: 30.0
+  duration_tolerance: 5.0
+  # 去重强度：轻 / 中 / 强
+  intensity: "中"
+  # 输出规格
+  size: "1080x1920"
+  # 默认 seed（0 = 随机）
+  seed: 0
+
+# --- 配音（MiniMax 真人声）---
+voice:
+  provider: "minimax"
+  model: "speech-2.8-turbo"
+  # 口播性别匹配：female=女声，male=男声
+  default_gender: "female"
+  voices:
+    female: "presenter_female"
+    male: "male-qn-jingying"
+  # API key 不在 git，存在本地安全位置
+  # 优先级：环境变量 MINIMAX_API_KEY > ~/.config/minimax/key
+  api_key_env: "MINIMAX_API_KEY"
+  api_key_file: "~/.config/minimax/key"
+  # 语速
+  speed: 1.0
+
+# --- 话术 ---
+script:
+  # 话术结构：前几秒爆款切片+原声，后段新话术配音
+  opening_seconds: 4.0
+  # 默认话术来源：arlo生成 / 用户提供
+  source: "arlo"
+
+# --- 去重特效开关 ---
+effects:
+  # P0 音频指纹对抗
+  audio_fingerprint: true
+  # P1 色彩微调 / 相邻帧混合
+  color_tweak: true
+  frame_blend: true
+  # P2 边缘畸变 / 锐度
+  lens_distort: true
+  sharp_tweak: true
+  # 字幕带毛玻璃
+  subtitle_blur: true
+  # 随机封面帧
+  cover_frame: true
