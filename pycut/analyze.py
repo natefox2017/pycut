@@ -77,10 +77,12 @@ class EvidenceBuilder:
                                      transcribe)
                 if stt_available():
                     print("  🎙 转录话术取句子时间戳...")
-                    # 先按标点拆分，再合并话语未完的片段（2026-10-01 修复：
-                    # STT 无标点时停顿≠说完，必须保证每段话术完整）
-                    segs = merge_incomplete(
-                        refine_sentences(transcribe(src, with_words=True)))
+                    # 先按标点拆分，去重，再合并话语未完的片段
+                    # （2026-10-01 修复：STT 无标点时停顿≠说完；
+                    #  VAD 重叠导致重复片段，需去重）
+                    from .speech import dedup_segments
+                    segs = merge_incomplete(dedup_segments(
+                        refine_sentences(transcribe(src, with_words=True))))
                     sentences = [(s.start, s.end, s.text) for s in segs]
                     cuts = snap_cuts_to_speech(
                         cuts, [(s, e) for s, e, _ in sentences], self.rules)

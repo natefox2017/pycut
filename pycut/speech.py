@@ -186,6 +186,38 @@ def _starts_continuation(text: str) -> bool:
     return t.startswith(_INCOMPLETE_START)
 
 
+def _similar(a: str, b: str) -> float:
+    """两段文本相似度（基于字符重叠）。"""
+    if not a or not b:
+        return 0.0
+    sa, sb = set(a), set(b)
+    return len(sa & sb) / max(len(sa | sb), 1)
+
+
+def dedup_segments(segs: list[SpeechSegment],
+                   threshold: float = 0.75) -> list[SpeechSegment]:
+    """去重：合并文本高度重复的相邻片段（STT VAD 切分重叠导致）。
+
+    如果后一段文本与前一段相似度 > threshold，合并（取时间并集，
+    文本取较长者）。
+    """
+    if not segs:
+        return []
+    out = [segs[0]]
+    for s in segs[1:]:
+        prev = out[-1]
+        if _similar(prev.text, s.text) > threshold:
+            # 合并：时间取并集，文本取较长的
+            merged_text = s.text if len(s.text) > len(prev.text) else prev.text
+            merged = SpeechSegment(prev.start, s.end, merged_text)
+            if prev.words or s.words:
+                merged.words = prev.words + s.words
+            out[-1] = merged
+        else:
+            out.append(s)
+    return out
+
+
 def merge_incomplete(segs: list[SpeechSegment],
                      max_dur: float = 20.0) -> list[SpeechSegment]:
     """合并话语未完的片段，保证每段都是一句完整的话。

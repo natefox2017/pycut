@@ -25,12 +25,13 @@ class SliceRecord:
     slice_count: int = 0
     output_dir: str = ""      # 切片输出目录（网盘相对路径）
     status: str = ""          # done / skipped_short / skipped_done / failed
+    note: str = ""            # 失败原因等备注
     time: str = ""
 
     def to_row(self, idx: int) -> str:
         return (f"| {idx} | {self.source_path} | {self.filename} | {self.md5} | "
                 f"{self.size} | {self.slice_count} | {self.output_dir} | "
-                f"{self.status} | {self.time} |")
+                f"{self.status} | {self.note} | {self.time} |")
 
 
 @dataclass
@@ -42,10 +43,13 @@ class MixRecord:
     output_dir: str = ""
     status: str = ""
     time: str = ""
+    seed: str = ""            # 二期：seed（可复现）
+    batch: str = ""           # 二期：批次名（网盘 成片/<批次>/）
 
     def to_row(self, idx: int) -> str:
         return (f"| {idx} | {self.source} | {self.script} | {self.count} | "
-                f"{self.output_dir} | {self.status} | {self.time} |")
+                f"{self.output_dir} | {self.status} | {self.time} | "
+                f"{self.seed} | {self.batch} |")
 
 
 class Ledger:
@@ -91,7 +95,11 @@ class Ledger:
     # ---------- 查询 ----------
 
     def is_processed(self, md5: str) -> bool:
-        return bool(md5) and md5 in self._md5_index
+        # 只有成功/跳过才算处理过；failed 允许重试
+        if not md5 or md5 not in self._md5_index:
+            return False
+        return any(r.md5 == md5 and r.status != "failed"
+                   for r in self.slice_records)
 
     # ---------- 追加 ----------
 
@@ -143,7 +151,9 @@ class Ledger:
                 count = 0
             rec = SliceRecord(source_path=cells[1], filename=cells[2],
                               md5=cells[3], size=cells[4], slice_count=count,
-                              output_dir=cells[6], status=cells[7], time=cells[8])
+                              output_dir=cells[6], status=cells[7],
+                              note=cells[8] if len(cells) >= 10 else "",
+                              time=cells[9] if len(cells) >= 10 else cells[8])
             self.slice_records.append(rec)
             if rec.md5:
                 self._md5_index.add(rec.md5)
@@ -156,7 +166,9 @@ class Ledger:
                 count = 0
             self.mix_records.append(MixRecord(
                 source=cells[1], script=cells[2], count=count,
-                output_dir=cells[4], status=cells[5], time=cells[6]))
+                output_dir=cells[4], status=cells[5], time=cells[6],
+                seed=cells[7] if len(cells) > 7 else "",
+                batch=cells[8] if len(cells) > 8 else ""))
 
     def _render(self) -> None:
         L: list[str] = []
@@ -166,15 +178,15 @@ class Ledger:
         L.append("")
         L.append(self.SLICE_ANCHOR)
         L.append("")
-        L.append("| # | 源视频网盘路径 | 文件名 | MD5 | 大小 | 切片数 | 切片输出目录 | 状态 | 处理时间 |")
-        L.append("|---|---|---|---|---|---|---|---|---|")
+        L.append("| # | 源视频网盘路径 | 文件名 | MD5 | 大小 | 切片数 | 切片输出目录 | 状态 | 备注 | 处理时间 |")
+        L.append("|---|---|---|---|---|---|---|---|---|---|")
         for i, r in enumerate(self.slice_records, 1):
             L.append(r.to_row(i))
         L.append("")
         L.append(self.MIX_ANCHOR)
         L.append("")
-        L.append("| # | 使用切片目录 | 话术行号/版本 | 成片数 | 输出目录 | 状态 | 处理时间 |")
-        L.append("|---|---|---|---|---|---|---|")
+        L.append("| # | 使用切片目录 | 话术行号/版本 | 成片数 | 输出目录 | 状态 | 处理时间 | seed | 批次 |")
+        L.append("|---|---|---|---|---|---|---|---|---|")
         for i, r in enumerate(self.mix_records, 1):
             L.append(r.to_row(i))
         L.append("")

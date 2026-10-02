@@ -37,6 +37,11 @@ TASK_ROWS = [
     ("话术来源", "爆款音频转录", "", "填：转录 / 我提供（见话术表）"),
     ("开头策略", "爆款同款开头", "", "混剪用爆款同款前几秒+轻微去重"),
     ("本批混剪", "否（一期先做切片）", "", "二期功能，暂不执行"),
+    # --- 二期：混剪参数 ---
+    ("混剪成片数", "5", "", "二期：本批混剪几条成片"),
+    ("混剪话术", "", "填话术表序号，一行一个", "二期：用哪几条话术"),
+    ("去重强度", "中", "", "二期：轻/中/强"),
+    ("混剪规格", "1080x1920", "", "二期：输出分辨率"),
     ("状态", "待填写", "", '填完改为"已填写"，再在聊天里告诉我'),
 ]
 
@@ -60,6 +65,11 @@ class TaskForm:
     scripts: list[str] = field(default_factory=list)
     status: str = ""
     warnings: list[str] = field(default_factory=list)
+    # --- 二期：混剪参数 ---
+    mix_count: int = 5
+    mix_script_rows: list[int] = field(default_factory=list)  # 话术表序号
+    mix_intensity: str = "中"
+    mix_size: str = "1080x1920"
 
     @property
     def ready(self) -> bool:
@@ -142,6 +152,22 @@ def read_taskform(path: Path) -> TaskForm:
     form.script_source = answers.get("话术来源", "爆款音频转录")
     form.hook_strategy = answers.get("开头策略", "爆款同款开头")
 
+    # 二期：混剪参数
+    try:
+        form.mix_count = max(1, int(answers.get("混剪成片数", "5")))
+    except ValueError:
+        form.mix_count = 5
+        form.warnings.append("混剪成片数不是数字，已用默认值 5")
+    rows: list[int] = []
+    for x in answers.get("混剪话术", "").replace("，", ",").split(","):
+        x = x.strip()
+        if x.isdigit():
+            rows.append(int(x))
+    form.mix_script_rows = rows
+    inten = answers.get("去重强度", "中").strip()
+    form.mix_intensity = inten if inten in ("轻", "中", "强") else "中"
+    form.mix_size = answers.get("混剪规格", "1080x1920").strip() or "1080x1920"
+
     # 产品信息表覆盖
     if "产品信息" in wb.sheetnames:
         wp = wb["产品信息"]
@@ -185,6 +211,8 @@ def summarize(form: TaskForm) -> str:
              f"短视频入库: {'是' if form.do_shorts else '否'}")
     L.append(f"  话术来源: {form.script_source}（{len(form.scripts)} 条）")
     L.append(f"  开头策略: {form.hook_strategy}")
+    L.append(f"  混剪: {form.mix_count} 条 × {form.mix_size}，去重{form.mix_intensity}，"
+             f"话术行号 {form.mix_script_rows or ['（未填，用全部）']}")
     L.append("  产品信息:\n" + "\n".join("    " + x
              for x in brief_text(form.product).splitlines()))
     for w in form.warnings:

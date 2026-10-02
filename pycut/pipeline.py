@@ -133,7 +133,8 @@ class SlicePipeline:
     def _process_one(self, src: DriveFile, ledger: Ledger,
                      mode: str) -> BatchResult:
         local = self.dl_dir / f"{src.md5[:8] if src.md5 else src.id[:8]}_{src.name}"
-        self.client.download(src, local)
+        if not local.exists():
+            self.client.download(src, local)
         md5 = src.md5 or DriveClient.md5_of(local)
         info = probe(local)
 
