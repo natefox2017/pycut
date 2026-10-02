@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 from pathlib import Path
 
@@ -313,6 +314,223 @@ def cmd_taskform(args) -> int:
     return 0
 
 
+def cmd_mix(args) -> int:
+    """功能二：混剪成片。用切片库批量混剪，核心目标是去重。
+
+    流程：读任务单（混剪参数+话术）-> 加载切片库 -> 开头池 ->
+    seed 规划 N 条 -> 下载切片 -> 生成字幕 -> 渲染 -> 上传成片/ -> 台账。
+    """
+    from datetime import datetime
+    from .mix import ClipInfo, MixPlanner, load_library, render
+    from .subtitles import assets_fonts_dir, ensure_fonts, write_ass
+
+    client, layout = _client(), DriveLayout()
+    # 1. 读任务单
+    parts = [x for x in args.taskform.strip("/").split("/") if x]
+    folder = client.resolve_path(layout.project_root_id, *parts[:-1]) \
+        if len(parts) > 1 else client.resolve_path(layout.project_root_id)
+    tf_file = client.find_child(folder.id, parts[-1])
+    if not tf_file:
+        print(f"找不到任务单: {args.taskform}")
+        return 1
+    local_tf = WORKDIR / parts[-1]
+    client.download(tf_file, local_tf)
+    form = read_taskform(local_tf)
+    local_tf.unlink(missing_ok=True)
+    if not form.ready:
+        print("⏸ 任务单状态不是'已填写'，不执行混剪")
+        return 2
+
+    count = args.count or form.mix_count
+    intensity = args.intensity or form.mix_intensity
+    # 话术：优先命令行，其次任务单话术表序号
+    scripts: list[str] = []
+    if args.script:
+        sp = Path(args.script)
+        scripts = [sp.read_text(encoding="utf-8").strip()] if sp.exists() \
+            else [args.script]
+    elif args.scripts_file:
+        scripts = [l.strip() for l in
+                   Path(args.scripts_file).read_text(encoding="utf-8")
+                   .splitlines() if l.strip()]
+    else:
+        rows = form.mix_script_rows or list(range(1, len(form.scripts) + 1))
+        scripts = [form.scripts[i - 1] for i in rows
+                   if 0 < i <= len(form.scripts)]
+    if not scripts:
+        print("没有话术：用 --script / --scripts-file，或在任务单话术表填写")
+        return 1
+    print(f"📝 话术 {len(scripts)} 条，混剪 {count} 条，强度 {intensity}")
+
+    # 2. 加载切片库 + 开头池
+    library, name_to_id = load_library(client, layout)
+    total_clips = sum(len(v) for v in library.values())
+    print(f"📚 切片库 {total_clips} 条")
+    if total_clips == 0:
+        print("切片库为空，先跑功能一")
+        return 1
+    hook_pool_dir = WORKDIR / "hook_pool"
+    hook_files = sorted(hook_pool_dir.glob("hook_*.mp4")) if hook_pool_dir.exists() else []
+    # 开头池也可用切片库"开头钩子"分类兜底
+    hook_pool: list[ClipInfo] = []
+    for hf in hook_files:
+        info = probe(hf)
+        hook_pool.append(ClipInfo(file_id="", name=hf.name,
+                                  category="开头钩子",
+                                  duration=info.duration,
+                                  local_path=hf))
+    if not hook_pool:
+        for c in library.get("开头钩子", [])[:20]:
+            hook_pool.append(c)
+    if not hook_pool:
+        print("开头池为空：先跑 `pycut hooks` 或等切片库有开头钩子分类")
+        return 1
+    print(f"🎬 开头池 {len(hook_pool)} 条")
+
+    # 3. 话术音频（可选）：有则按音频时长对齐，否则按文本估算
+    audio_path: Path | None = None
+    audio_dur: float | None = None
+    if args.audio:
+        audio_path = Path(args.audio)
+        if audio_path.exists():
+            audio_dur = probe(audio_path).duration
+            print(f"🔊 话术音频 {audio_dur:.1f}s")
+    if audio_dur is None:
+        from .scriptgen import estimate_duration
+        audio_dur = estimate_duration(scripts[0])
+        print(f"🔊 无音频，按文本估算 {audio_dur:.1f}s")
+
+    # 4. 输出目录
+    batch = datetime.now().strftime("%Y%m%d-%H%M")
+    granule = client.resolve_path(layout.project_root_id,
+                                   layout.source_root_name)
+    out_root = client.ensure_folder(granule.id, layout.outputs_dir_name)
+    batch_folder = client.ensure_folder(out_root.id, f"批次-{batch}")
+    workdir = WORKDIR / "mix" / batch
+    dl_dir = workdir / "downloads"
+    dl_dir.mkdir(parents=True, exist_ok=True)
+
+    # 5. 逐条规划渲染
+    fonts = ensure_fonts()
+    fonts_dir = assets_fonts_dir()
+    usage_path = WORKDIR / "mix" / "usage.json"
+    seed_base = args.seed or 20261002
+    ok = 0
+    for i in range(count):
+        seed = seed_base + i
+        script = scripts[i % len(scripts)]
+        planner = MixPlanner(seed=seed, intensity=intensity)
+        planner.load_usage(usage_path)
+        try:
+            plan = planner.plan(library, hook_pool, audio_dur)
+        except ValueError as e:
+            print(f"  第 {i+1} 条规划失败: {e}")
+            continue
+        # 下载本条用到的切片
+        from .mix import detect_blur_bg
+        for seg in plan.segments:
+            clip = seg.clip
+            if clip.local_path and clip.local_path.exists():
+                detect_blur_bg(seg)
+                continue
+            fid = clip.file_id or name_to_id.get(clip.name)
+            if not fid:
+                # 开头池本地文件
+                continue
+            dst = dl_dir / clip.name
+            if not dst.exists():
+                client.download(DriveFile(id=fid, name=clip.name,
+                                          mime_type="video/mp4",
+                                          size=0, md5=""), dst)
+            clip.local_path = dst
+            detect_blur_bg(seg)
+        # 字幕
+        ass_path = workdir / f"mix_{seed}.ass"
+        write_ass(script, plan.target_duration, plan.subtitle_style,
+                  fonts, ass_path)
+        # 渲染
+        out_path = workdir / f"成片_{batch}_{i+1:02d}.mp4"
+        # 话术音频：有则用，无则生成静音轨（按 Ta）
+        seg_audio = audio_path
+        if seg_audio is None:
+            seg_audio = workdir / f"silence_{seed}.m4a"
+            if not seg_audio.exists():
+                subprocess.run(
+                    ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                     "-f", "lavfi", "-i",
+                     f"anullsrc=r=44100:cl=stereo:d={plan.target_duration:.2f}",
+                     "-c:a", "aac", str(seg_audio)], check=True)
+        try:
+            render(plan, seg_audio, out_path,
+                   ass_path=ass_path, fonts_dir=fonts_dir,
+                   pad_bytes=args.pad_bytes)
+        except RuntimeError as e:
+            print(f"  第 {i+1} 条渲染失败: {e}")
+            continue
+        # 上传
+        client.upload(out_path, batch_folder.id,
+                      name=f"成片_{batch}_{i+1:02d}.mp4")
+        planner.save_usage(usage_path)
+        # 台账记录
+        _record_mix_ledger(client, layout, batch, i + 1, plan, script)
+        # 清理本条本地文件（保留 usage）
+        for seg in plan.segments:
+            p = seg.clip.local_path
+            if p and hook_pool_dir not in p.parents and p.exists():
+                p.unlink(missing_ok=True)
+        out_path.unlink(missing_ok=True)
+        ass_path.unlink(missing_ok=True)
+        ok += 1
+        print(f"  ✅ 第 {i+1}/{count} 条成片已上传 (seed={seed})")
+    print(f"\n🎉 混剪完成: {ok}/{count} 条 -> 网盘 {layout.outputs_dir_name}/批次-{batch}/")
+    return 0 if ok else 1
+
+
+def _record_mix_ledger(client, layout, batch: str, idx: int,
+                       plan, script: str) -> None:
+    """混剪台账：seed/用料/变换参数/话术版本，可复现。"""
+    from datetime import datetime
+    granule = client.resolve_path(layout.project_root_id,
+                                   layout.source_root_name)
+    out_root = client.find_child(granule.id, layout.outputs_dir_name)
+    batch_folder = client.find_child(out_root.id, f"批次-{batch}")
+    ledger_name = "混剪台账.md"
+    existing = client.find_child(batch_folder.id, ledger_name)
+    lines: list[str] = []
+    if existing:
+        tmp = Path(f"/tmp/mix_ledger_{batch}.md")
+        client.download(existing, tmp)
+        lines = tmp.read_text(encoding="utf-8").splitlines()
+        tmp.unlink(missing_ok=True)
+    else:
+        lines = ["# 混剪台账", "",
+                 "| # | seed | 用料 | 变换 | 时长 | 话术摘要 | 时间 |",
+                 "|---|---|---|---|---|---|---|"]
+    used = "; ".join(
+        f"{s.clip.name}[{s.clip.category}]"
+        f"{'@' + str(round(s.speed, 2)) + 'x' if abs(s.speed - 1.0) > 1e-6 else ''}"
+        f"{'镜' if s.mirror else ''}n{s.noise_n}"
+        f"{'z103' if s.zoom_103 else ''}"
+        f"{'抽帧' if s.drop_frames else ''}"
+        f"{'模糊bg' if s.blur_bg else ''}"
+        f"{'字幕模糊' if s.blur_sub_band else ''}"
+        for s in plan.segments)
+    trans = ",".join({s.transition for s in plan.segments})
+    wm = f"/水印:{plan.watermark_text}" if plan.watermark_text else ""
+    lines.append(
+        f"| {idx} | {plan.seed} | {used[:200]} | {trans} "
+        f"gop{plan.gop}/{plan.bitrate}/字幕{plan.subtitle_style}{wm} | "
+        f"{plan.target_duration:.1f}s | {script[:30]} | "
+        f"{datetime.now():%Y-%m-%d %H:%M} |")
+    tmp = Path(f"/tmp/mix_ledger_{batch}.md")
+    tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    if existing:
+        client.update_content(existing.id, tmp)
+    else:
+        client.upload(tmp, batch_folder.id, name=ledger_name)
+    tmp.unlink(missing_ok=True)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="pycut", description="PyCut 云端视频处理管线")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -378,6 +596,20 @@ def main(argv=None) -> int:
     p.add_argument("--scripts-file", default=None, help="话术文本文件（write 用，一行一条）")
     p.add_argument("--video", default=None, help="爆款视频网盘路径（extract-opening 用）")
     p.set_defaults(fn=cmd_scriptgen)
+
+    p = sub.add_parser("mix", help="功能二：混剪成片（去重）")
+    p.add_argument("--taskform", required=True,
+                   help="任务单网盘路径，如 颗粒/任务单-2026-10-01.xlsx")
+    p.add_argument("--count", type=int, default=None, help="成片数（默认读任务单）")
+    p.add_argument("--script", default=None, help="话术文本或文本文件路径")
+    p.add_argument("--scripts-file", default=None, help="话术文件，一行一条")
+    p.add_argument("--audio", default=None, help="话术音频本地路径（可选）")
+    p.add_argument("--intensity", choices=["轻", "中", "强"], default=None,
+                   help="去重强度（默认读任务单）")
+    p.add_argument("--seed", type=int, default=None, help="起始 seed（默认 20261002）")
+    p.add_argument("--pad-bytes", type=int, default=0,
+                   help="文件尾追加随机字节数（破文件哈希，可选）")
+    p.set_defaults(fn=cmd_mix)
 
     args = ap.parse_args(argv)
     return args.fn(args)
