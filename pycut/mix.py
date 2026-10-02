@@ -422,8 +422,10 @@ def segment_filter(seg: SegmentPlan, idx: int,
             f"x='(iw-ow)*{xr:.3f}':y='(ih-oh)*{yr:.3f}'"
         )
     # 1b. 1.03x 中心放大（实战验证：破抽帧指纹，裁掉边缘水印/字幕带）
+    # 先缩放到目标尺寸再放大裁剪，避免小分辨率源越界
     if seg.zoom_103:
-        f.append(f"scale=iw*1.03:ih*1.03,"
+        f.append(f"scale={w}:{h}:flags=lanczos,"
+                 f"scale=iw*1.03:ih*1.03,"
                  f"crop={w}:{h}:(in_w-{w})/2:(in_h-{h})/2")
     # 2. 变速（钩子恒 1.0）
     if abs(seg.speed - 1.0) > 1e-6:
@@ -460,7 +462,9 @@ def segment_filter(seg: SegmentPlan, idx: int,
         f.append(f"fade=t=in:st=0:d=0.25,fade=t=out:st={d - 0.25:.2f}:d=0.25")
     elif seg.transition == "zoom":
         # 轻微推进缩放（整段 6% 放大），居中裁剪回规格
-        f.append(f"scale=iw*1.06:ih*1.06,crop={w}:{h}:(in_w-{w})/2:(in_h-{h})/2")
+        # 先缩放到目标尺寸再放大，避免小分辨率源越界
+        f.append(f"scale={w}:{h}:flags=lanczos,"
+                 f"scale=iw*1.06:ih*1.06,crop={w}:{h}:(in_w-{w})/2:(in_h-{h})/2")
     # 7. 规格归一
     f.append(f"scale={w}:{h}:flags=lanczos,setsar=1,fps={fps}")
     return f"[{idx}:v]" + ",".join(f) + f"[v{idx}]"
