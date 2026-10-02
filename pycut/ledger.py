@@ -174,6 +174,7 @@ class Ledger:
         L: list[str] = []
         L.append("# EasyCut 视频处理进度记录")
         L.append("")
+        # Arlo = 用户的 AI 助手（Muse），在 Hatch 云电脑上运行本管线并维护此台账
         L.append("> 由 Arlo 在云电脑上维护。每次处理完一批后更新。")
         L.append("")
         L.append(self.SLICE_ANCHOR)

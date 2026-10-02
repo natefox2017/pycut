@@ -8,6 +8,7 @@
     # 注释
 
 用户通过改 product.yaml（仓库一份，网盘一份）来告诉 Arlo 产品的核心特点。
+（Arlo = 用户的 AI 助手 Muse，负责写话术。）
 话术生成/转录后必须经过 check_script() 事实核对，违规项需人工修正。
 """
 from __future__ import annotations

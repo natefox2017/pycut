@@ -1,4 +1,7 @@
-"""分类：启发式预分类 + 待复核兜底 + Arlo 人工复核入口。"""
+"""分类：启发式预分类 + 待复核兜底 + Arlo 人工复核入口。
+
+Arlo = 用户的 AI 助手（Muse）：看抽帧后人工确认切片分类。
+"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -13,7 +16,8 @@ def heuristic_category(info: MediaInfo, src_name: str,
 
     规则按置信度从高到低：
     1. 用户关键词映射（最准，人工指定）
-    2. 兜底 -> 待复核（由 Arlo 看帧后人工定类，见 decide_category）
+    2. 兜底 -> 待复核（由 Arlo 看帧后人工定类，见 decide_category；
+       Arlo = 用户的 AI 助手 Muse）
     """
     keyword_map = keyword_map or {}
     for kw, cat in keyword_map.items():
@@ -32,7 +36,8 @@ def audio_hint_category(media_path: Path) -> str | None:
 
 def review_frames(src: Path, cuts: list[tuple[float, float]],
                   out_dir: Path) -> list[Path]:
-    """为每条切片抽 3 帧（头/中/尾），供 Arlo 人工复核分类。"""
+    """为每条切片抽 3 帧（头/中/尾），供 Arlo 人工复核分类。
+    Arlo = 用户的 AI 助手（Muse）。"""
     paths: list[Path] = []
     for i, (s, e) in enumerate(cuts):
         mid = (s + e) / 2

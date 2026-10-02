@@ -5,7 +5,8 @@
 2. 用户直接提供文案。
 
 转录方式：
-- 现阶段：Arlo 人工转录。程序按固定间隔抽字幕帧（爆款视频多为烧录字幕），
+- 现阶段：Arlo 人工转录（Arlo = 用户的 AI 助手 Muse）。
+  程序按固定间隔抽字幕帧（爆款视频多为烧录字幕），
   Arlo 读帧整理成文，再经 product.check_script() 事实核对。
 - 预留：WhisperTranscriber（本地 Whisper 模型，待用户确认后再接入）。
 
@@ -30,7 +31,8 @@ def subtitle_frame_times(duration: float, every: float = 5.0) -> list[float]:
 
 def extract_subtitle_frames(src: Path, out_dir: Path,
                             every: float = 5.0, width: int = 720) -> list[Path]:
-    """抽字幕帧，供 Arlo 读字幕整理话术。返回帧路径列表。"""
+    """抽字幕帧，供 Arlo 读字幕整理话术。返回帧路径列表。
+    Arlo = 用户的 AI 助手（Muse）。"""
     info: MediaInfo = probe(src)
     out_dir.mkdir(parents=True, exist_ok=True)
     jobs = [(t, out_dir / f"sub_{t:07.1f}.jpg")

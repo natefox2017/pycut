@@ -1,7 +1,8 @@
 """PyCut 命令行入口。
 
 云电脑说明（必读）：
-- 运行环境 = Hatch 云电脑（Linux）。直接 `python -m pycut ...` 即可，
+- 运行环境 = Hatch 云电脑（Linux，由 Muse 提供给用户的云端 Linux 虚拟机，
+  Arlo 即运行在此环境中）。直接 `python -m pycut ...` 即可，
   无需虚拟环境（主流程零第三方依赖）。
 - WORKDIR（~/workspace/pycut/run）是本地中转区：downloads（下载中转）、
   outputs（切片产出）、review_pack（AI 证据包）、decisions（AI 决策）、
@@ -164,7 +165,8 @@ def cmd_product(args) -> int:
 
 
 def cmd_transcribe(args) -> int:
-    """话术转录准备：按固定间隔抽字幕帧，供 Arlo 读字幕整理话术。"""
+    """话术转录准备：按固定间隔抽字幕帧，供 Arlo 读字幕整理话术。
+    Arlo = 用户的 AI 助手（Muse）。"""
     from pathlib import Path
     client, layout = _client(), DriveLayout()
     out_root = WORKDIR / "transcribe"
@@ -181,6 +183,7 @@ def cmd_transcribe(args) -> int:
             frames = extract_subtitle_frames(local, out_dir, every=args.every)
             local.unlink(missing_ok=True)
             print(f"📝 {v.name}: {len(frames)} 张字幕帧 -> {out_dir}")
+    # Arlo = 用户的 AI 助手（Muse）：读帧整理话术后写入话术文件
     print("\nArlo 读帧整理话术后，写入话术文件（UTF-8，每行一条），"
           "再经 product.check_script() 事实核对")
     return 0
@@ -214,6 +217,7 @@ def cmd_hooks(args) -> int:
 
 def cmd_scriptgen(args) -> int:
     """话术生成（独立执行过程，产出进任务单"话术"表）。
+    Arlo = 用户的 AI 助手（Muse）。
     prepare: 方式一，输出 Arlo 写话术用的输入包（产品+参考话术+目标）。
     write: 把话术文件校验后写入任务单"话术"表并回传网盘。
     extract-opening: 方式二，提取爆款视频前 N 秒原音频存入 颗粒/音频库/。
@@ -234,6 +238,7 @@ def cmd_scriptgen(args) -> int:
                    if x.strip()]
             tmp.unlink(missing_ok=True)
         print(build_prepare_brief(product, ref, args.seconds, args.count))
+        # Arlo = 用户的 AI 助手（Muse）
         print(f"\nArlo 写完话术后跑: pycut scriptgen write --path {args.path} "
               f"--name {args.name} --scripts-file 话术.txt")
         return 0

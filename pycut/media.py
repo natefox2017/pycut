@@ -78,7 +78,8 @@ def detect_scenes(path: Path, threshold: float = 0.35) -> list[float]:
 
 def extract_frame(path: Path, t: float, out: Path,
                   width: int = 320) -> Path:
-    """抽一帧（供 Arlo 人工复核分类用）。"""
+    """抽一帧（供 Arlo 人工复核分类用）。
+    Arlo = 用户的 AI 助手（Muse），看抽帧后人工确认切片分类。"""
     out.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(
         ["ffmpeg", "-hide_banner", "-loglevel", "error",

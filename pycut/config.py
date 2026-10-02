@@ -76,5 +76,6 @@ def confirmed_sources() -> list[SourceSpec]:
         SourceSpec(folder_id="", name="片段/死老鼠", role="shorts",
                    note="单条视频，不用切片，混剪时按需拼接"),
         SourceSpec(folder_id="", name="主图", role="assets",
+                   # Arlo = 用户的 AI 助手（Muse），负责在混剪时决定产品图片的拼入时机
                    note="产品图片素材，混剪时由 Arlo 决定拼入时机"),
     ]
