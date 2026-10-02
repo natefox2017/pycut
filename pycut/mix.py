@@ -252,7 +252,9 @@ class MixPlanner:
         self._bump_usage(hook)
 
         # 2. 中间段：有话术按句子分段选片，无话术按总时长
-        if script.strip():
+        #    注意：按句子选片时顺序即对应话术时间轴，不能打乱（§4）
+        use_sentence_order = bool(script.strip())
+        if use_sentence_order:
             middles = self._choose_by_sentences(library, used_prefixes,
                                                  script, audio_duration,
                                                  hook_seconds)
@@ -264,8 +266,9 @@ class MixPlanner:
         for m in middles:
             self._bump_usage(m)
 
-        # 3. 结构层：开头固定，中间打散重排
-        self.rng.shuffle(middles)
+        # 3. 结构层：开头固定；无话术时中间打散重排，有话术时保持句子顺序
+        if not use_sentence_order:
+            self.rng.shuffle(middles)
         clips = [hook] + middles
 
         # 4. 先定每段变速（钩子恒 1.0，中间 0.95~1.05 随机），再做时长对齐。

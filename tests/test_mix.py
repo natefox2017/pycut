@@ -153,13 +153,28 @@ def test_vignette_in_filter():
 
 
 def test_plan_with_script():
-    """有话术时按句子分段选片。"""
+    """有话术时按句子分段选片，且保持句子顺序不打乱。"""
     lib, hooks = _library(), _library()["开头钩子"]
     script = "你敢相信吗。用啤酒消灭老鼠。又快又猛。"
     plan = MixPlanner(seed=42).plan(lib, hooks, 20.0, script=script)
     # 3 句 + 1 钩子 = 4 段
     assert len(plan.segments) == 4
     assert plan.segments[0].is_hook
+    # 句子顺序保持：多次规划同一 seed 结果一致（不 shuffle）
+    plan2 = MixPlanner(seed=42).plan(lib, hooks, 20.0, script=script)
+    names1 = [s.clip.name for s in plan.segments]
+    names2 = [s.clip.name for s in plan2.segments]
+    assert names1 == names2
+
+
+def test_plan_without_script_shuffles():
+    """无话术时中间段打散（seed 可复现）。"""
+    lib, hooks = _library(), _library()["开头钩子"]
+    plan1 = MixPlanner(seed=42).plan(lib, hooks, 20.0)
+    plan2 = MixPlanner(seed=42).plan(lib, hooks, 20.0)
+    names1 = [s.clip.name for s in plan1.segments]
+    names2 = [s.clip.name for s in plan2.segments]
+    assert names1 == names2  # 同 seed 可复现
 
 
 def test_plan_custom_size():
