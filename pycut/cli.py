@@ -343,6 +343,13 @@ def cmd_mix(args) -> int:
 
     count = args.count or form.mix_count
     intensity = args.intensity or form.mix_intensity
+    # 分辨率：命令行 > 任务单 > 默认 1080x1920
+    size_str = args.size or form.mix_size or "1080x1920"
+    try:
+        sw, sh = size_str.lower().split("x")
+        out_w, out_h = int(sw), int(sh)
+    except ValueError:
+        out_w, out_h = 1080, 1920
     # 话术：优先命令行，其次任务单话术表序号
     scripts: list[str] = []
     if args.script:
@@ -422,16 +429,20 @@ def cmd_mix(args) -> int:
         planner = MixPlanner(seed=seed, intensity=intensity)
         planner.load_usage(usage_path)
         try:
-            plan = planner.plan(library, hook_pool, audio_dur)
+            plan = planner.plan(library, hook_pool, audio_dur, script=script)
+            plan.width, plan.height = out_w, out_h
         except ValueError as e:
             print(f"  第 {i+1} 条规划失败: {e}")
             continue
         # 下载本条用到的切片
-        from .mix import detect_blur_bg
+        from .mix import detect_blur_bg, has_text_overlay
         for seg in plan.segments:
             clip = seg.clip
             if clip.local_path and clip.local_path.exists():
                 detect_blur_bg(seg)
+                # §3.2 禁忌：有烧录文字的不镜像
+                if seg.mirror and has_text_overlay(seg):
+                    seg.mirror = False
                 continue
             fid = clip.file_id or name_to_id.get(clip.name)
             if not fid:
@@ -444,6 +455,8 @@ def cmd_mix(args) -> int:
                                           size=0, md5=""), dst)
             clip.local_path = dst
             detect_blur_bg(seg)
+            if seg.mirror and has_text_overlay(seg):
+                seg.mirror = False
         # 字幕
         ass_path = workdir / f"mix_{seed}.ass"
         write_ass(script, plan.target_duration, plan.subtitle_style,
@@ -607,6 +620,8 @@ def main(argv=None) -> int:
     p.add_argument("--intensity", choices=["轻", "中", "强"], default=None,
                    help="去重强度（默认读任务单）")
     p.add_argument("--seed", type=int, default=None, help="起始 seed（默认 20261002）")
+    p.add_argument("--size", default=None,
+                   help="输出分辨率，如 1080x1920（默认）或 720x1280（吃力时降级）")
     p.add_argument("--pad-bytes", type=int, default=0,
                    help="文件尾追加随机字节数（破文件哈希，可选）")
     p.set_defaults(fn=cmd_mix)
