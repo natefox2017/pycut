@@ -135,6 +135,31 @@ def test_blur_bg_filter():
     assert "gblur=sigma=40" in f and "overlay=" in f
 
 
+def test_vignette_in_filter():
+    seg = MixPlanner(seed=5)._plan_segment(_clip("a.mp4"), False, 6.0, 1.0)
+    seg.vignette = True
+    f = segment_filter(seg, 0)
+    assert "vignette=" in f
+
+
+def test_plan_with_script():
+    """有话术时按句子分段选片。"""
+    lib, hooks = _library(), _library()["开头钩子"]
+    script = "你敢相信吗。用啤酒消灭老鼠。又快又猛。"
+    plan = MixPlanner(seed=42).plan(lib, hooks, 20.0, script=script)
+    # 3 句 + 1 钩子 = 4 段
+    assert len(plan.segments) == 4
+    assert plan.segments[0].is_hook
+
+
+def test_plan_custom_size():
+    lib, hooks = _library(), _library()["开头钩子"]
+    plan = MixPlanner(seed=42).plan(lib, hooks, 20.0)
+    plan.width, plan.height = 720, 1280
+    fg, _ = build_filtergraph(plan)
+    assert "scale=720:1280" in fg
+
+
 def test_parse_slice_index():
     text = ("- abc_001_开头钩子.mp4 | 6.0s | 开头 | 你敢相信吗\n"
             "- notavideo.txt | 3s | x | y\n"
