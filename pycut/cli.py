@@ -400,13 +400,26 @@ def cmd_mix(args) -> int:
     print(f"🎬 开头池 {len(hook_pool)} 条")
 
     # 3. 话术音频（可选）：有则按音频时长对齐，否则按文本估算
+    #    方式二（§8）：--opening-audio 指定开头爆款原声时，
+    #    最终音频 = 开头原声 + 话术配音拼接，视频总时长向拼接后音频看齐
     audio_path: Path | None = None
     audio_dur: float | None = None
+    opening_audio_path: Path | None = None
+    opening_dur: float = 0.0
+    if args.opening_audio:
+        op = Path(args.opening_audio)
+        if op.exists():
+            opening_audio_path = op
+            opening_dur = probe(op).duration
+            print(f"🎙 开头原音频 {opening_dur:.1f}s（方式二）")
     if args.audio:
         audio_path = Path(args.audio)
         if audio_path.exists():
-            audio_dur = probe(audio_path).duration
-            print(f"🔊 话术音频 {audio_dur:.1f}s")
+            main_dur = probe(audio_path).duration
+            print(f"🔊 话术音频 {main_dur:.1f}s")
+            audio_dur = opening_dur + main_dur if opening_dur > 0 else main_dur
+            if opening_dur > 0:
+                print(f"🔊 拼接后总时长 {audio_dur:.1f}s")
     if audio_dur is None:
         from .scriptgen import estimate_duration
         audio_dur = estimate_duration(scripts[0])
@@ -422,6 +435,19 @@ def cmd_mix(args) -> int:
     dl_dir = workdir / "downloads"
     dl_dir.mkdir(parents=True, exist_ok=True)
 
+    # 3b. 方式二音频拼接：开头原声 + 话术配音（在 workdir 定义后执行）
+    if opening_audio_path and audio_path and opening_dur > 0:
+        concat_path = workdir / "concat_audio.m4a"
+        if not concat_path.exists():
+            # 用 ffmpeg concat 拼接两段音频
+            import subprocess as _sp
+            _sp.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                     "-i", str(opening_audio_path), "-i", str(audio_path),
+                     "-filter_complex", "[0:a][1:a]concat=n=2:v=0:a=1",
+                     "-c:a", "aac", str(concat_path)], check=True)
+            print(f"🎙 音频已拼接: {concat_path.name}")
+        audio_path = concat_path  # 后续渲染用拼接后的音频
+
     # 5. 逐条规划渲染
     fonts = ensure_fonts()
     fonts_dir = assets_fonts_dir()
@@ -434,7 +460,10 @@ def cmd_mix(args) -> int:
         planner = MixPlanner(seed=seed, intensity=intensity)
         planner.load_usage(usage_path)
         try:
-            plan = planner.plan(library, hook_pool, audio_dur, script=script)
+            # 方式二：hook 片段时间 = 开头原声音频时长
+            hook_secs = opening_dur if opening_dur > 0 else 4.0
+            plan = planner.plan(library, hook_pool, audio_dur, script=script,
+                                hook_seconds=hook_secs)
             plan.width, plan.height = out_w, out_h
         except ValueError as e:
             print(f"  第 {i+1} 条规划失败: {e}")
@@ -623,6 +652,8 @@ def main(argv=None) -> int:
     p.add_argument("--script", default=None, help="话术文本或文本文件路径")
     p.add_argument("--scripts-file", default=None, help="话术文件，一行一条")
     p.add_argument("--audio", default=None, help="话术音频本地路径（可选）")
+    p.add_argument("--opening-audio", default=None,
+                   help="开头爆款原音频本地路径（方式二：前几秒用爆款原声+原画面，后面接话术配音）")
     p.add_argument("--intensity", choices=["轻", "中", "强"], default=None,
                    help="去重强度（默认读任务单）")
     p.add_argument("--seed", type=int, default=None, help="起始 seed（默认 20261002）")

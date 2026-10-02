@@ -177,6 +177,39 @@ def test_plan_without_script_shuffles():
     assert names1 == names2  # 同 seed 可复现
 
 
+def test_color_tweak_in_filter():
+    """色彩微调滤镜包含 hue 和 colorbalance。"""
+    seg = MixPlanner(seed=5)._plan_segment(_clip("a.mp4"), False, 6.0, 1.0)
+    seg.color_tweak = True
+    seg.noise_variant = 0
+    seg.noise_n = 10
+    f = segment_filter(seg, 0)
+    assert "hue=" in f
+    assert "colorbalance=" in f
+
+
+def test_frame_blend_in_filter():
+    """相邻帧混合滤镜包含 tblend。"""
+    seg = MixPlanner(seed=5)._plan_segment(_clip("a.mp4"), False, 6.0, 1.0)
+    seg.frame_blend = True
+    seg.noise_variant = 0
+    seg.noise_n = 10
+    f = segment_filter(seg, 0)
+    assert "tblend=all_mode=average" in f
+
+
+def test_lens_and_sharp_in_filter():
+    """边缘畸变和锐度滤镜。"""
+    seg = MixPlanner(seed=5)._plan_segment(_clip("a.mp4"), False, 6.0, 1.0)
+    seg.lens_distort = True
+    seg.sharp_tweak = True
+    seg.noise_variant = 0
+    seg.noise_n = 10
+    f = segment_filter(seg, 0)
+    assert "lenscorrection=" in f
+    assert "unsharp=" in f
+
+
 def test_plan_custom_size():
     lib, hooks = _library(), _library()["开头钩子"]
     plan = MixPlanner(seed=42).plan(lib, hooks, 20.0)

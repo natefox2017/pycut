@@ -79,6 +79,11 @@ class SegmentPlan:
     blur_bg: bool = False        # 横屏素材：模糊背景填充转竖屏
     blur_sub_band: bool = False  # 底部字幕带模糊（盖掉源片烧录字幕）
     vignette: bool = False       # 暗角（§3.4 特效层）
+    # P1/P2 开源调研补齐（2026-10-02）
+    color_tweak: bool = False   # 色彩空间微调：hue + colorbalance
+    frame_blend: bool = False   # 相邻帧混合：tblend，对抗抽帧哈希
+    lens_distort: bool = False  # 边缘畸变：lenscorrection，对抗几何特征
+    sharp_tweak: bool = False   # 锐度微调：unsharp，改变锐度指纹
     # 结构层
     transition: str = "hardcut"  # hardcut / fade / zoom
     # 时长对齐后
@@ -390,6 +395,17 @@ class MixPlanner:
         # 暗角（§3.4 特效层）：中 30% / 强 50%，轻微不影响观看
         p_vig = {"轻": 0.0, "中": 0.3, "强": 0.5}[self.intensity]
         seg.vignette = r.random() < p_vig
+        # P1/P2 开源调研补齐（2026-10-02）：色彩微调/帧混合/畸变/锐度
+        # 色彩微调：中 40% / 强 70%，轻不做
+        p_color = {"轻": 0.0, "中": 0.4, "强": 0.7}[self.intensity]
+        seg.color_tweak = (not is_hook) and r.random() < p_color
+        # 相邻帧混合：中 30% / 强 50%（轻微拖影，钩子不做）
+        p_blend = {"轻": 0.0, "中": 0.3, "强": 0.5}[self.intensity]
+        seg.frame_blend = (not is_hook) and r.random() < p_blend
+        # 边缘畸变+锐度：仅强 30%
+        p_lens = {"轻": 0.0, "中": 0.0, "强": 0.3}[self.intensity]
+        seg.lens_distort = (not is_hook) and r.random() < p_lens
+        seg.sharp_tweak = (not is_hook) and r.random() < p_lens
         # 转场轮换
         seg.transition = r.choice(["hardcut", "hardcut", "fade", "zoom"])
         return seg
@@ -440,6 +456,19 @@ def segment_filter(seg: SegmentPlan, idx: int,
     if seg.tone:
         b, s, c = seg.tone
         f.append(f"eq=brightness={b:.3f}:saturation={1 + s:.3f}:contrast={1 + c:.3f}")
+    # 3b. P1 色彩空间微调（2026-10-02 开源调研）：比色调更细，
+    #     色相/饱和度轻微偏移 + RGB 通道偏移，按 seed 随机
+    #     只在中/强强度启用，轻度保持干净
+    if getattr(seg, 'color_tweak', False):
+        import random as _r
+        _rr = _r.Random(hash((seg.clip.name, "color")) % (2**32))
+        hue_h = round(_rr.uniform(-2, 2), 2)
+        hue_s = round(_rr.uniform(0.97, 1.03), 3)
+        rs = round(_rr.uniform(-0.02, 0.02), 3)
+        gs = round(_rr.uniform(-0.02, 0.02), 3)
+        bs = round(_rr.uniform(-0.02, 0.02), 3)
+        f.append(f"hue=h={hue_h}:s={hue_s}")
+        f.append(f"colorbalance=rs={rs}:gs={gs}:bs={bs}")
     # 4. 镜像
     if seg.mirror:
         f.append("hflip")
@@ -455,6 +484,23 @@ def segment_filter(seg: SegmentPlan, idx: int,
     # 5c. 暗角（§3.4）：轻微，PI/5 强度
     if seg.vignette:
         f.append("vignette=PI/5")
+    # 5d. P1 相邻帧混合（2026-10-02 开源调研）：tblend 平均相邻帧，
+    #     改变帧间关系，对抗抽帧哈希。轻微拖影，强度可控
+    if seg.frame_blend:
+        f.append("tblend=all_mode=average")
+    # 5e. P2 边缘畸变+锐度微调（2026-10-02 开源调研）：
+    #     极轻微镜头畸变对抗几何特征比对，锐度微调改变锐度指纹
+    if seg.lens_distort:
+        f.append("lenscorrection=k1=0.01:k2=0.01")
+    if seg.sharp_tweak:
+        import random as _r2
+        _rr2 = _r2.Random(hash((seg.clip.name, "sharp")) % (2**32))
+        # 随机轻微锐化或柔化
+        amount = round(_rr2.uniform(-0.3, 0.5), 2)
+        if amount >= 0:
+            f.append(f"unsharp=5:5:{amount}")
+        else:
+            f.append(f"unsharp=5:5:{amount}")  # 负值=柔化
     # 5b. 底部字幕带模糊（盖掉源片烧录字幕，防 OCR 查重）
     #     注：与 crop_shift/zoom_103 互斥，见 _segment_filter_sub_blur
     if seg.blur_sub_band:
@@ -567,17 +613,30 @@ def render(plan: MixPlan, audio_path: Path, out_path: Path,
         vlabel = "[vsub]"
     ta = plan.target_duration
     n = len(segs)
+    # P0 音频指纹对抗（2026-10-02 开源调研）：音频指纹是查重主力之一，
+    # 加轻微变调+混响+EQ+重采样，人耳几乎无感但指纹失配。参数按 seed 变化。
+    rng = random.Random(plan.seed * 31 + 7)
+    pitch = round(rng.uniform(0.99, 1.01), 4)  # ±1% 变调
+    eq_f = rng.choice([800, 1000, 1200, 1500])  # EQ 中心频率
+    eq_g = round(rng.uniform(-2, 2), 1)  # EQ 增益 dB
+    # aecho 参数：in_gain:out_gain:delay:decay，轻微空间感
+    af = (f"asetrate=44100*{pitch},aresample=44100,"
+          f"aecho=0.8:0.88:60:0.4,"
+          f"equalizer=f={eq_f}:t=q:w=1:g={eq_g},"
+          f"aresample=48000")
+    fg += f";[{n}:a:0]{af}[aout]"
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
     for s in segs:
         cmd += ["-i", str(s.clip.local_path)]
     cmd += ["-i", str(audio_path)]
     cmd += ["-filter_complex", fg,
-            "-map", vlabel, "-map", f"{n}:a:0",
+            "-map", vlabel, "-map", "[aout]",
             "-t", f"{ta:.2f}",
             "-c:v", "libx264", "-preset", "medium",
             "-g", str(plan.gop), "-b:v", plan.bitrate,
             "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-b:a", "128k",
+            "-map_metadata", "-1",  # P3: 清洗元数据，防剪辑软件指纹残留
             "-movflags", "+faststart",
             str(out_path)]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
